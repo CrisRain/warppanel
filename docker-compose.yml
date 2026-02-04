@@ -8,17 +8,17 @@ services:
     image: warppanel-monolith:latest
     container_name: warppanel-client
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun
-    sysctls:
-      - net.ipv6.conf.all.disable_ipv6=0
+    environment:
+      - WARP_BACKEND=official # Options: 'usque' (default), 'official'
+    cap_add: [ NET_ADMIN ]
+    devices: [ /dev/net/tun ]
     ports:
       - "5173:8000" # Web UI (served by FastAPI)
       - "1080:1080" # SOCKS5 Proxy
     volumes:
       - warp_data:/var/lib/cloudflare-warp
+      - warp_usque:/var/lib/warp
 
 volumes:
   warp_data:
+  warp_usque:

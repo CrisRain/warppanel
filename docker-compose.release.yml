@@ -11,6 +11,8 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun
+    environment:
+      - WARP_BACKEND=official # 可选: 'usque' (高性能, 默认) 或 'official' (官方客户端)
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
     # 端口映射
@@ -20,6 +22,7 @@ services:
     # 数据持久化 (保存 WARP 注册信息)
     volumes:
       - warp_data:/var/lib/cloudflare-warp
+      - ./warp_config:/var/lib/warp # usque 配置文件 (建议挂载)
 
 volumes:
   warp_data:

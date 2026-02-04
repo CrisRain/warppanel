@@ -13,7 +13,13 @@ from .warp_controller import WarpController
 # Configuration
 SOCKS5_PORT = 1080
 
-# Logging setup with custom handler
+# Filter for noisy connection logs
+class ConnectionFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        return "connection open" not in msg and "connection closed" not in msg
+
+# Custom handler
 class LogCollector(logging.Handler):
     def __init__(self, maxlen=100):
         super().__init__()
@@ -29,6 +35,7 @@ class LogCollector(logging.Handler):
         self._loop = loop
     
     def emit(self, record):
+        # Filter is applied at handler level, so we don't need to check here
         log_entry = {
             'timestamp': datetime.fromtimestamp(record.created).strftime('%H:%M:%S'),
             'level': record.levelname,
@@ -54,6 +61,15 @@ logger = logging.getLogger(__name__)
 # Add collector to root logger
 root_logger = logging.getLogger()
 root_logger.addHandler(log_collector)
+
+# Apply filter to ALL handlers (console + collector)
+conn_filter = ConnectionFilter()
+for handler in root_logger.handlers:
+    handler.addFilter(conn_filter)
+    
+# Also suppress uvicorn access logs if needed (optional, but "connection open" usually comes from uvicorn.error/asgi)
+logging.getLogger("uvicorn.access").addFilter(conn_filter)
+logging.getLogger("uvicorn.error").addFilter(conn_filter)
 
 # Broadcast log helper - manager will be defined later
 async def broadcast_log(log_entry):
@@ -84,64 +100,118 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global Controller Instance
-warp_controller = WarpController(instance_id=1, name="Primary", socks5_port=SOCKS5_PORT)
+# Global Controller Instance removed, access via factory pattern
+
+# Initialize controller on startup
+@app.on_event("startup")
+async def init_controller():
+    logger.info("Initializing WARP controller...")
+    controller = WarpController.get_instance()
+    
+    # Attempt to connect/start backend at startup
+    logger.info("Starting WARP backend...")
+    # Run in background task to avoid blocking startup
+    asyncio.create_task(connect_in_background(controller))
+
+async def connect_in_background(controller):
+    logger.info("Starting WARP backend (background)...")
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, controller.connect)
 
 # Serve Frontend
 # We assume the frontend build is copied to /app/static in the Docker image
 if os.path.exists("/app/static"):
     app.mount("/assets", StaticFiles(directory="/app/static/assets"), name="assets")
-    # You might need to mount other root files like favicon.ico specifically if they exist
-    # For SPA, we usually serve index.html for unknown routes, but let's handle the specific static dirs first
 
     @app.get("/")
     async def read_index():
         return FileResponse('/app/static/index.html')
 
-    # Catch-all for SPA routing (if any deep links are used)
-    # WARNING: This might conflict with API routes if not careful. 
-    # API routes are defined below So FastAPI matches them first.
-    # But we need to put this at the END or ensure specific path matching.
-    # Actually, Starlette routing matches in order. So we should put this LAST.
 else:
     logger.warning("Static files directory /app/static not found. Frontend will not be served.")
 
+# Helper for running blocking functions
+async def run_blocking(func, *args):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, func, *args)
+
 @app.get("/api/status")
 async def get_status():
-    return warp_controller.get_status()
+    return await run_blocking(WarpController.get_instance().get_status)
+
+@app.get("/api/backend/current")
+async def get_current_backend():
+    """Get current backend type"""
+    controller = WarpController.get_instance()
+    backend = await run_blocking(WarpController.get_current_backend)
+    
+    is_connected = False
+    if hasattr(controller, 'is_connected'):
+        is_connected = await run_blocking(controller.is_connected)
+        
+    return {
+        "backend": backend,
+        "connected": is_connected
+    }
+
+@app.post("/api/backend/switch")
+async def switch_backend(request: dict):
+    """Switch WARP backend"""
+    new_backend = request.get("backend")
+    
+    if new_backend not in ["usque", "official"]:
+        raise HTTPException(status_code=400, detail="Invalid backend. Use 'usque' or 'official'")
+    
+    try:
+        # Switch backend using factory
+        controller = await run_blocking(WarpController.switch_backend, new_backend)
+        
+        # Try to connect with new backend (optional, but good UX)
+        if await run_blocking(controller.connect):
+            return {"success": True, "backend": new_backend, "status": "connected"}
+        else:
+            return {"success": True, "backend": new_backend, "status": "disconnected", "warning": "Backend switched but failed to connect immediately"}
+            
+    except Exception as e:
+        logger.error(f"Switch backend failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/connect")
 async def connect():
-    success = warp_controller.connect()
+    controller = WarpController.get_instance()
+    success = await run_blocking(controller.connect)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to connect WARP")
-    return warp_controller.get_status()
+    return await run_blocking(controller.get_status)
 
 @app.post("/api/disconnect")
 async def disconnect():
-    success = warp_controller.disconnect()
+    controller = WarpController.get_instance()
+    success = await run_blocking(controller.disconnect)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to disconnect WARP")
-    return warp_controller.get_status()
+    return await run_blocking(controller.get_status)
 
 @app.post("/api/rotate")
 async def rotate_ip():
     """
     轮换 IP 地址（简单模式：断开重连）
-    
-    Returns:
-        轮换结果
     """
-    # 简单模式：断开重连
-    warp_controller.disconnect()
-    await asyncio.sleep(1)
-    success = warp_controller.connect()
+    controller = WarpController.get_instance()
+    
+    # Use built-in rotate if available
+    if hasattr(controller, 'rotate_ip_simple'):
+        success = await run_blocking(controller.rotate_ip_simple)
+    else:
+        # Fallback manual rotation
+        await run_blocking(controller.disconnect)
+        await asyncio.sleep(1)
+        success = await run_blocking(controller.connect)
     
     if not success:
         raise HTTPException(status_code=500, detail="Failed to rotate (reconnect failed)")
     
-    return warp_controller.get_status()
-
+    return await run_blocking(controller.get_status)
 
 
 @app.get("/api/logs")
@@ -185,7 +255,8 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         # Send initial status
-        await websocket.send_json({"type": "status", "data": warp_controller.get_status()})
+        initial_status = await run_blocking(WarpController.get_instance().get_status)
+        await websocket.send_json({"type": "status", "data": initial_status})
         
         # Poll and push status updates every few seconds? 
         # Or just rely on client polling/actions?
@@ -199,9 +270,24 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Timeout is fine, just push status
                 pass
                 
-            status = warp_controller.get_status()
+            status = await run_blocking(WarpController.get_instance().get_status)
             await websocket.send_json({"type": "status", "data": status})
             
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+# Fallback for SPA (Catch-all)
+# Must be defined last to avoid shadowing other routes
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    # Don't catch API or WebSocket routes
+    if full_path.startswith("api") or full_path.startswith("ws"):
+         raise HTTPException(status_code=404)
+    
+    # Check if file exists in static/assets (handled by mount, but just in case)
+    if os.path.exists(f"/app/static/{full_path}"):
+        return FileResponse(f"/app/static/{full_path}")
+        
+    return FileResponse('/app/static/index.html')
 

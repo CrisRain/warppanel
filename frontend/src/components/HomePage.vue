@@ -25,9 +25,51 @@
               <p class="text-xs text-gray-500">Secure Connection Manager</p>
             </div>
           </div>
-          <div class="flex items-center gap-2 text-xs font-medium text-gray-600 bg-orange-50 px-4 py-2 rounded-full border border-orange-200/70 backdrop-blur-md shadow-sm">
+          <div class="flex items-center gap-3">
+            <!-- Backend Selector -->
+            <div class="relative group z-50">
+              <button 
+                class="flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-full border backdrop-blur-md shadow-sm transition-all duration-200"
+                :class="backend === 'usque' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-gray-50 text-gray-700 border-gray-200'"
+              >
+                <span class="w-1.5 h-1.5 rounded-full" :class="backend === 'usque' ? 'bg-indigo-500' : 'bg-gray-400'"></span>
+                <span class="uppercase tracking-wider">{{ backend }}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              
+              <!-- Dropdown -->
+              <div class="absolute right-0 top-full mt-2 w-40 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 transform origin-top-right">
+                <div class="p-1">
+                  <button 
+                    @click="switchBackend('usque')"
+                    class="w-full text-left px-3 py-2 text-xs font-medium rounded-lg transition-colors flex items-center justify-between"
+                    :class="backend === 'usque' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'"
+                  >
+                    <span>USQUE (Default)</span>
+                    <svg v-if="backend === 'usque'" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </button>
+                  <button 
+                    @click="switchBackend('official')"
+                    class="w-full text-left px-3 py-2 text-xs font-medium rounded-lg transition-colors flex items-center justify-between"
+                    :class="backend === 'official' ? 'bg-orange-50 text-orange-700' : 'text-gray-600 hover:bg-gray-50'"
+                  >
+                    <span>Official Client</span>
+                    <svg v-if="backend === 'official'" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 text-xs font-medium text-gray-600 bg-orange-50 px-4 py-2 rounded-full border border-orange-200/70 backdrop-blur-md shadow-sm">
             <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-sm shadow-emerald-400/50"></div>
-            <span>v1.0.0</span>
+            <span>v1.2.0</span>
+          </div>
           </div>
         </div>
       </header>
@@ -177,21 +219,7 @@
               </div>
             </div>
 
-            <!-- Endpoint Card -->
-            <div class="group relative overflow-hidden backdrop-blur-md bg-white/90 border border-orange-200/60 rounded-2xl p-5 shadow-lg hover:shadow-xl hover:shadow-orange-200/50 transition-all duration-300 hover:scale-[1.02]">
-              <div class="absolute -right-8 -top-8 w-32 h-32 bg-orange-200/20 rounded-full blur-2xl group-hover:bg-orange-300/30 transition-all duration-500"></div>
-              <div class="relative flex items-start gap-3">
-                <div class="p-2.5 bg-gradient-to-br from-orange-100 to-orange-200 rounded-xl ring-1 ring-orange-300/50 shadow-sm">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <p class="text-xs font-medium text-gray-500 mb-1">Endpoint</p>
-                  <p class="text-sm font-mono font-bold text-gray-900 truncate animate-fade-in" :key="endpoint">{{ endpoint }}</p>
-                </div>
-              </div>
-            </div>
+
           </div>
 
           <!-- Proxy Address Card - Large -->
@@ -357,7 +385,7 @@ const city = computed(() => statusData.value.city || 'Unknown');
 const country = computed(() => statusData.value.country || 'Unknown');
 const isp = computed(() => statusData.value.isp || 'Cloudflare WARP');
 const protocol = computed(() => statusData.value.warp_protocol || 'Unknown');
-const endpoint = computed(() => statusData.value.endpoint?.address || 'Auto (Anycast)');
+
 const proxyAddress = computed(() => statusData.value.proxy_address || 'socks5://127.0.0.1:1080');
 
 const apiCall = async (method, url, data = null) => {
@@ -408,6 +436,33 @@ const rotateIP = async () => {
     console.error('IP rotation failed:', err);
   } finally {
     isRotating.value = false;
+  }
+};
+
+const backend = computed(() => statusData.value.backend || 'usque');
+
+const switchBackend = async (newBackend) => {
+  if (backend.value === newBackend) return;
+  
+  if (!confirm(`Switch backend to ${newBackend}? This will reconnect WARP.`)) return;
+  
+  isLoading.value = true;
+  try {
+    const result = await apiCall('post', '/api/backend/switch', { backend: newBackend });
+    if (result && result.success) {
+      console.log('Backend switched to:', result.backend);
+      // Wait a bit for connection to stabilize
+      setTimeout(() => {
+        isLoading.value = false;
+      }, 1000);
+    } else {
+      error.value = result?.warning || 'Failed to switch backend';
+      isLoading.value = false;
+    }
+  } catch (err) {
+    console.error('Switch backend failed:', err);
+    error.value = 'Failed to switch backend';
+    isLoading.value = false;
   }
 };
 
