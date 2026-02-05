@@ -368,6 +368,41 @@ class OfficialController:
         
         return False
 
+    def set_custom_endpoint(self, endpoint: str) -> bool:
+        """Set custom endpoint using warp-cli"""
+        try:
+            if not endpoint:
+                # Reset
+                logger.info("Resetting custom endpoint (official)...")
+                cmd = "warp-cli --accept-tos tunnel endpoint reset"
+            else:
+                # Set
+                logger.info(f"Setting custom endpoint to {endpoint} (official)...")
+                cmd = f"warp-cli --accept-tos tunnel endpoint set {endpoint}"
+            
+            res = self.execute_command(cmd)
+            # warp-cli usually returns minimal output on success, or "Success"
+            # execute_command returns stdout (string) or None on failure.
+            
+            # Restart/Reconnect might be needed? 
+            # Usually endpoint changes apply immediately or on next connect.
+            # Let's force reconnect to be safe and consistent with usque behavior
+            if self.is_connected():
+                # self.disconnect() # Disconnect is slow/heavy
+                # Just disconnect logic?
+                # Actually official client might just need a reconnect.
+                # Let's try to just return True, caller might decide to reconnect?
+                # But usque reconnects. Let's be consistent.
+                self.disconnect()
+                time.sleep(2)
+                return self.connect()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to set custom endpoint: {e}")
+            return False
+
     def _get_city_from_colo(self, colo: str) -> str:
         """Map Cloudflare colo code to city"""
         city_map = {

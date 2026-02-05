@@ -213,6 +213,21 @@ async def rotate_ip():
     
     return await run_blocking(controller.get_status)
 
+@app.post("/api/config/endpoint")
+async def set_endpoint(request: dict):
+    """Set custom endpoint address (IP:PORT)"""
+    endpoint = request.get("endpoint", "").strip()
+    controller = WarpController.get_instance()
+    
+    if hasattr(controller, 'set_custom_endpoint'):
+        success = await run_blocking(controller.set_custom_endpoint, endpoint)
+        if success:
+             return {"success": True, "endpoint": endpoint}
+        else:
+             raise HTTPException(status_code=500, detail="Failed to set endpoint")
+    else:
+        raise HTTPException(status_code=501, detail="Backend does not support custom endpoints")
+
 
 @app.get("/api/logs")
 async def get_logs(limit: int = 100):
@@ -269,9 +284,15 @@ async def websocket_endpoint(websocket: WebSocket):
             except asyncio.TimeoutError:
                 # Timeout is fine, just push status
                 pass
+            except WebSocketDisconnect:
+                break
                 
             status = await run_blocking(WarpController.get_instance().get_status)
-            await websocket.send_json({"type": "status", "data": status})
+            try:
+                await websocket.send_json({"type": "status", "data": status})
+            except (RuntimeError, WebSocketDisconnect):
+                # Socket likely closed
+                break
             
     except WebSocketDisconnect:
         manager.disconnect(websocket)

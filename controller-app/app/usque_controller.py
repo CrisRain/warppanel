@@ -6,6 +6,8 @@ import subprocess
 import logging
 import psutil
 import time
+import json
+import os
 from typing import Optional, Dict
 
 logging.basicConfig(level=logging.INFO)
@@ -237,6 +239,66 @@ class UsqueController:
         
         return False
     
+    def set_custom_endpoint(self, endpoint: str) -> bool:
+        """Set custom endpoint in config.json and restart"""
+        try:
+            # Validate format: usque config usually takes IP or IP:PORT?
+            # User request: "usque的endpoint不能加端口" -> usque endpoint CANNOT have port? 
+            # If so, we should STRIP port if present or Validate to NOT have port.
+            # OR maybe user means "I provided port and it failed, so it shouldn't require one".
+            # Let's relax validation. 
+            # If user explicitly says "cannot add port", maybe they mean the input shouldn't have it.
+            # But earlier we saw config had "162.159.192.1:443".
+            # Wait, let's re-read the user request carefully: "usque的endpoint不能加端口"
+            # It translates to "usque's endpoint cannot add port".
+            # This might mean:
+            # 1. The code I added forcing IP:PORT is wrong because usque handles it differently or user wants IP only.
+            # 2. Or providing port breaks it.
+            # Given the previous config showed ports, maybe my validation is too strict or blocked valid input.
+            # Let's remove the strict IP:PORT check and just allow non-empty strings.
+            # And if user provides IP:PORT, let it pass. If IP only, let it pass.
+            
+            # Actually, looking at the previous traces, the user previously successfully set it with port via python script.
+            # "d['endpoint_v4']='162.159.192.1:443'"
+            # So port IS allowed in config.
+            # The user might be saying my VALIDATION rejected their input which maybe didn't have a port?
+            # OR the user tried to put a port and it failed for some reason?
+            # But the user said "usque endpoint cannot add port".
+            # This is ambiguous. It could mean "I can't add a port" (system prevents it) or "It MUST NOT have a port".
+            # But since config had 443, it likely CAN have a port.
+            # I will assume the user wants me to REMOVE the validation that REQUIRES a port.
+            
+            if not os.path.exists(self.config_path):
+                logger.error("Config file not found")
+                return False
+            
+            with open(self.config_path, 'r') as f:
+                config = json.load(f)
+            
+            if not endpoint:
+                # Reset/Clear
+                if "endpoint_v4" in config:
+                    del config["endpoint_v4"]
+            else:
+                config["endpoint_v4"] = endpoint
+            
+            with open(self.config_path, 'w') as f:
+                json.dump(config, f, indent=2)
+            
+            logger.info(f"Updated usque endpoint to: {endpoint}")
+            
+            # Restart if connected
+            if self.is_connected():
+                self.disconnect()
+                time.sleep(1)
+                return self.connect()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to set custom endpoint: {e}")
+            return False
+
     def _get_city_from_colo(self, colo: str) -> str:
         """Map Cloudflare colo code to city name"""
         city_map = {

@@ -68,7 +68,7 @@
 
             <div class="flex items-center gap-2 text-xs font-medium text-gray-600 bg-orange-50 px-4 py-2 rounded-full border border-orange-200/70 backdrop-blur-md shadow-sm">
             <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-sm shadow-emerald-400/50"></div>
-            <span>v1.2.0</span>
+            <span>v1.3.0</span>
           </div>
           </div>
         </div>
@@ -254,26 +254,30 @@
             </div>
           </div>
 
-          <!-- Actions -->
-          <div class="flex flex-col items-center gap-3">
-            <div class="flex justify-center gap-3 flex-wrap">
+          <!-- Custom Endpoint Input -->
+          <div class="flex flex-col items-center gap-3 w-full max-w-md mx-auto">
+            <div class="relative flex items-center w-full group">
+              <div class="absolute inset-0 bg-gradient-to-r from-orange-200 to-orange-100 rounded-xl blur opacity-25 group-hover:opacity-40 transition-opacity duration-300"></div>
+              <input 
+                v-model="customEndpoint" 
+                type="text" 
+                placeholder="Custom Endpoint (e.g. 162.159.192.1:2408)" 
+                class="relative w-full px-4 py-3 pr-24 rounded-xl bg-white/90 border border-orange-200 focus:border-orange-400 focus:ring-4 focus:ring-orange-100 outline-none transition-all shadow-sm text-sm font-mono text-gray-700 placeholder-gray-400"
+                @keyup.enter="setEndpoint"
+                :disabled="isSettingEndpoint || isLoading"
+              />
               <button 
-                @click="rotateIP"
-                :disabled="!isConnected || isLoading"
-                class="group relative overflow-hidden px-6 py-3 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl shadow-orange-500/30 hover:shadow-orange-600/40 disabled:shadow-gray-400/20 text-white"
+                @click="setEndpoint"
+                :disabled="isSettingEndpoint || isLoading"
+                class="absolute right-1.5 top-1.5 bottom-1.5 px-4 rounded-lg bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white text-xs font-bold transition-all shadow-md shadow-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 z-10"
               >
-                <div class="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>
-                <div class="relative flex items-center gap-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" :class="{'animate-spin': isRotating}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  <span>{{ isRotating ? 'Rotating...' : '🔄 Rotate IP' }}</span>
-                </div>
+                <span v-if="isSettingEndpoint" class="animate-spin h-3 w-3 border-2 border-white/30 border-t-white rounded-full"></span>
+                <span>{{ isSettingEndpoint ? 'SETTING' : 'APPLY' }}</span>
               </button>
             </div>
             
-            <p class="text-xs text-gray-500 text-center max-w-2xl mt-3">
-              💡 Click to rotate your IP address (disconnect and reconnect)
+            <p class="text-[10px] text-gray-400 text-center uppercase tracking-wider font-medium">
+              Leave empty to reset • Auto-reconnects
             </p>
           </div>
 
@@ -373,7 +377,9 @@ const statusData = ref({
   details: {}
 });
 const isLoading = ref(false);
-const isRotating = ref(false);
+const isRotating = ref(false); // Kept for legacy if needed, but unused in template now
+const isSettingEndpoint = ref(false);
+const customEndpoint = ref('');
 const error = ref(null);
 const logs = ref([]);
 let socket = null;
@@ -426,6 +432,7 @@ const toggleConnection = async () => {
 };
 
 const rotateIP = async () => {
+  // Legacy function - kept just in case or we can remove
   isRotating.value = true;
   try {
     const result = await apiCall('post', '/api/rotate');
@@ -436,6 +443,25 @@ const rotateIP = async () => {
     console.error('IP rotation failed:', err);
   } finally {
     isRotating.value = false;
+  }
+};
+
+const setEndpoint = async () => {
+  isSettingEndpoint.value = true;
+  try {
+    const result = await apiCall('post', '/api/config/endpoint', { endpoint: customEndpoint.value });
+    if (result && result.success) {
+      console.log('Endpoint set successfully:', result.endpoint);
+      // Maybe show success checkmark?
+      // Connection will reset automatically
+      // Wait for re-connection?
+    } else {
+        // Error handled in apiCall generally if it returns null, but check result
+    }
+  } catch (err) {
+    console.error('Set endpoint failed:', err);
+  } finally {
+    isSettingEndpoint.value = false;
   }
 };
 
