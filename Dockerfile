@@ -21,8 +21,8 @@ FROM ubuntu:22.04
 # Install basic deps + python + warp deps + networking tools
 RUN apt-get update && apt-get install -y \
     curl gpg lsb-release ca-certificates dbus \
-    python3 python3-pip socat supervisor \
-    iputils-ping iproute2 \
+    python3 python3-pip socat \
+    iputils-ping iproute2 systemd systemd-sysv \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Cloudflare Warp (official client - kept for fallback)
@@ -35,6 +35,7 @@ COPY --from=usque-download /tmp/usque /usr/local/bin/usque
 
 # Setup Python App
 WORKDIR /app
+ENV PYTHONUNBUFFERED=1
 COPY controller-app/requirements.txt .
 # Remove docker from requirements if present, or just install what we need. 
 # We'll install manually to be safe/clean or rely on updated requirements.txt. 
@@ -49,10 +50,26 @@ COPY controller-app/app /app/app
 COPY --from=frontend-build /frontend_app/dist /app/static
 
 # Configs
-COPY controller-app/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY controller-app/usque.service /etc/systemd/system/usque.service
+# removed warppool-api.service
+COPY controller-app/socat.service /etc/systemd/system/socat.service
+
+# # Enable services (warp-svc is official daemon, usque is alternative)
+# # socat is needed for official client
+# RUN systemctl enable warp-svc
+# RUN systemctl enable usque
+# RUN systemctl enable warppool-api
+# RUN systemctl enable socat
+
 # Ports
-# 8000: Web UI + API (FastAPI serves static files now)
+# 8000: Web UI + API
 # 1080: SOCKS5 Proxy
 EXPOSE 8000 1080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Copy entrypoint
+COPY controller-app/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Use systemd as init, but via entrypoint wrapper to start API
+STOPSIGNAL SIGRTMIN+3
+CMD ["/app/entrypoint.sh"]

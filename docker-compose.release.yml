@@ -4,25 +4,22 @@ services:
   warp:
     # 使用 Docker Hub 上的预构建镜像
     image: crisocean/warppanel:latest
-    container_name: warppanel
+    container_name: warppanel-client
     restart: unless-stopped
-    # 必须的能力和设备权限 (用于 TUN 设备)
-    cap_add:
-      - NET_ADMIN
+    # Systemd 需要特权模式
+    privileged: true
+    environment:
+      - WARP_BACKEND=official # Options: 'usque' (default), 'official'
     devices:
       - /dev/net/tun
-    environment:
-      - WARP_BACKEND=official # 可选: 'usque' (高性能, 默认) 或 'official' (官方客户端)
-    sysctls:
-      - net.ipv6.conf.all.disable_ipv6=0
-    # 端口映射
     ports:
-      - "5173:8000" # Web 控制面板 (默认 http://localhost:5173 访问，内部转发8000)
-      - "1080:1080" # SOCKS5 代理
-    # 数据持久化 (保存 WARP 注册信息)
+      - "5173:8000" # Web UI (served by FastAPI)
+      - "1080:1080" # SOCKS5 Proxy
     volumes:
       - warp_data:/var/lib/cloudflare-warp
-      - ./warp_config:/var/lib/warp # usque 配置文件 (建议挂载)
+      - warp_usque:/var/lib/warp
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw # Systemd cgroup mounting
 
 volumes:
   warp_data:
+  warp_usque:

@@ -1,0 +1,16 @@
+[Unit]
+Description=Usque WARP Client (SOCKS5 Proxy)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+# Adjust configuration path and port if necessary
+ExecStart=/usr/local/bin/usque -c /var/lib/warp/config.json socks -b 0.0.0.0 -p 1080
+Restart=always
+RestartSec=5
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

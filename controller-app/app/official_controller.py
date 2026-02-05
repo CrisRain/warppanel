@@ -103,19 +103,14 @@ class OfficialController:
     def _is_daemon_responsive(self) -> bool:
         """Check if warp-svc is running AND responsive"""
         try:
-            # 1. Check process existence
-            has_process = False
-            try:
-                import psutil
-                for proc in psutil.process_iter(['name']):
-                    if proc.info['name'] == 'warp-svc':
-                        has_process = True
-                        break
-            except ImportError:
-                res = subprocess.run("pgrep warp-svc", shell=True)
-                has_process = (res.returncode == 0)
-            
-            if not has_process:
+            # 1. Check systemd status
+            # systemctl is-active returns 0 if active
+            res = subprocess.run(
+                ["systemctl", "is-active", "warp-svc"], 
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            if res.returncode != 0:
                 return False
 
             # 2. Check responsiveness
@@ -137,36 +132,22 @@ class OfficialController:
         return self._is_daemon_responsive()
 
     def _start_services(self) -> bool:
-        """Start dbus, warp-svc, and socat"""
+        """Start warp-svc via systemd and socat"""
         try:
-            logger.info("Starting background services...")
+            logger.info("Starting background services (systemd)...")
             
             # Reset mute flag on start
             self.mute_backend_logs = False
             
-            # 1. Start dbus if needed
-            subprocess.run("mkdir -p /run/dbus", shell=True)
-            if os.path.exists("/run/dbus/pid"):
-                os.remove("/run/dbus/pid")
-            subprocess.Popen(
-                "dbus-daemon --config-file=/usr/share/dbus-1/system.conf --print-address",
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            time.sleep(1)
+            # 1. Start warp-svc via systemd
+            # This handles dbus and dependencies automatically
+            try:
+                subprocess.run(["systemctl", "start", "warp-svc"], check=True)
+            except subprocess.CalledProcessError:
+                logger.error("Failed to start warp-svc via systemctl")
+                return False
             
-            # 2. Start warp-svc
-            # Use DEVNULL to suppress logs and avoid pipe buffering issues
-            svc_proc = subprocess.Popen(
-                "warp-svc --accept-tos",
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            
-            # Log monitoring removed as per user request
-            # time.sleep(3)
+            # logging removed as per user request
             time.sleep(3)
             
             # Start socat early as requested
@@ -213,59 +194,61 @@ class OfficialController:
 
     def _stop_services(self):
         """Stop warp-svc and socat"""
-        logger.info("Stopping official services...")
+        logger.info("Stopping official services (systemd)...")
         try:
-            # Kill socat
-            subprocess.run(f"pkill -f 'socat TCP-LISTEN:{self.socks5_port}'", shell=True)
+            # Stop socat via systemd
+            subprocess.run(["systemctl", "stop", "socat"], check=False)
             
-            # Kill warp-svc
-            subprocess.run("pkill warp-svc", shell=True)
+            # Stop warp-svc via systemd
+            subprocess.run(["systemctl", "stop", "warp-svc"], check=False)
             
-            # Kill dbus? Maybe leave it.
         except Exception as e:
             logger.error(f"Error stopping services: {e}")
 
-    def _ensure_socat(self):
-        """Start socat if not running (Checks port 1080)"""
+    def _is_port_open(self, port: int) -> bool:
+        """Check if port is listening using ss"""
         try:
-            # Check if port 1080 is listening using ss (more reliable than pgrep which can match itself)
-            # -H: no header, -l: listening, -n: numeric
-            # We grep for :1080 (or whatever port)
-            check = subprocess.run(
-                f"ss -tln | grep -q :{self.socks5_port}",
-                shell=True
+            result = subprocess.run(
+                ["ss", "-lnt", f"sport = :{port}"],
+                capture_output=True,
+                text=True
             )
-            
-            # If port is listening, assume socat is running correctly
-            if check.returncode == 0:
-                return
+            return f":{port}" in result.stdout
+        except Exception:
+            return False
 
-            logger.info(f"Starting socat on port {self.socks5_port}...")
-            
-            # Ensure no stale processes force kill just in case port wasn't held but process exists?
-            subprocess.run(f"pkill -f 'socat TCP-LISTEN:{self.socks5_port}'", shell=True)
-            
-            # Use a log file to capture output
-            log_file = open("/var/log/socat.log", "w")
-            proc = subprocess.Popen(
-                f"socat -d -d TCP-LISTEN:{self.socks5_port},fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:40001",
-                shell=True,
-                stdout=log_file,
-                stderr=log_file
+    def _ensure_socat(self):
+        """Ensure socat service is running and listening"""
+        sys_active = False
+        try:
+            # Check if socat service is active
+            res = subprocess.run(
+                ["systemctl", "is-active", "socat"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
             )
+            sys_active = res.returncode == 0
+        except Exception:
+            pass
             
-            # Wait a moment to verify startup
-            time.sleep(0.5)
-            if proc.poll() is not None:
-                logger.error("socat failed to start. Check /var/log/socat.log")
-                try:
-                    with open("/var/log/socat.log", "r") as f:
-                        logger.error(f"socat logs: {f.read()}")
-                except:
-                    pass
-            else:
-                logger.info(f"socat started successfully with PID {proc.pid}")
-                pass
+        # Also check if it's actually listening
+        port_open = self._is_port_open(self.socks5_port)
+            
+        if sys_active and port_open:
+            return
+
+        logger.info("Starting socat service...")
+        try:
+            subprocess.run(["systemctl", "start", "socat"], check=True)
+            
+            # Wait a moment for port to open
+            time.sleep(1)
+            
+            # Verify port
+            if not self._is_port_open(self.socks5_port):
+                logger.warning(f"Socat started but port {self.socks5_port} is not listening yet")
+                # Maybe wait a bit longer?
+                time.sleep(2)
                 
         except Exception as e:
             logger.error(f"Error starting socat: {e}")

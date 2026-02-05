@@ -68,25 +68,24 @@ version: '3.8'
 services:
   warp:
     image: crisocean/warppanel:latest
-    container_name: warppanel
+    container_name: warppanel-client
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
+    privileged: true # Systemd support
+    environment:
+      - WARP_BACKEND=official # 'usque' (default) or 'official'
     devices:
       - /dev/net/tun
-    environment:
-      - WARP_BACKEND=usque # 可选: 'usque' (默认,高性能) 或 'official' (官方客户端)
-    sysctls:
-      - net.ipv6.conf.all.disable_ipv6=0
     ports:
-      - "5173:8000" # Web 控制台
-      - "1080:1080" # SOCKS5 代理端口
+      - "5173:8000" # Web UI
+      - "1080:1080" # SOCKS5 Proxy
     volumes:
       - warp_data:/var/lib/cloudflare-warp
-      - ./warp_config:/var/lib/warp # usque 配置文件持久化 (建议挂载)
+      - warp_usque:/var/lib/warp
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw # Required for systemd
 
 volumes:
   warp_data:
+  warp_usque:
 ```
 
 2. **启动服务**

@@ -1,0 +1,16 @@
+[Unit]
+Description=Socat SOCKS5 Proxy for WARP
+After=network.target
+
+[Service]
+Type=simple
+User=root
+# Adjust if ports are different, currently using 1080 -> 127.0.0.1:40001 (Official WARP Proxy Port)
+ExecStart=/usr/bin/socat -d -d TCP-LISTEN:1080,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:40001
+Restart=always
+RestartSec=5
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

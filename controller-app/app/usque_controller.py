@@ -55,7 +55,7 @@ class UsqueController:
             return False
 
     def connect(self) -> bool:
-        """Start usque SOCKS5 proxy"""
+        """Start usque SOCKS5 proxy via systemd"""
         # Ensure initialized (registered)
         if not self.initialize():
             logger.error("Failed to initialize usque backend")
@@ -66,32 +66,18 @@ class UsqueController:
             return True
             
         try:
-            cmd = [
-                "usque",
-                "-c", self.config_path,
-                "socks",
-                "-b", "0.0.0.0",
-                "-p", str(self.socks5_port),
-
-            ]
-            
-            logger.info(f"Starting usque: {' '.join(cmd)}")
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+            logger.info("Starting usque service...")
+            # Use systemctl to start service
+            subprocess.run(["systemctl", "start", "usque"], check=True)
             
             # Wait for startup
             time.sleep(3)
             
-            # Check if process is still running
-            if self.process.poll() is None:
+            if self.is_connected():
                 logger.info("usque started successfully")
                 return True
             else:
-                stderr = self.process.stderr.read().decode() if self.process.stderr else ""
-                logger.error(f"usque process exited: {stderr}")
+                logger.error("usque service failed to start or is inactive")
                 return False
         
         except Exception as e:
@@ -99,57 +85,51 @@ class UsqueController:
             return False
     
     def disconnect(self) -> bool:
-        """Stop usque"""
-        if self.process:
-            try:
-                logger.info("Stopping usque...")
-                self.process.terminate()
-                self.process.wait(timeout=5)
-                logger.info("usque stopped successfully")
-                self.process = None
-                return True
-            except subprocess.TimeoutExpired:
-                logger.warning("usque didn't stop gracefully, killing...")
-                self.process.kill()
-                self.process = None
-                return False
-            except Exception as e:
-                logger.error(f"Error stopping usque: {e}")
-                return False
-        
-        # Try to kill any usque process on the port
+        """Stop usque via systemd"""
         try:
-            for conn in psutil.net_connections():
-                if conn.laddr.port == self.socks5_port and conn.status == 'LISTEN':
-                    proc = psutil.Process(conn.pid)
-                    if 'usque' in proc.name().lower():
-                        proc.kill()
-                        logger.info(f"Killed usque process (PID: {conn.pid})")
-        except:
-            pass
-        
-        return True
+            logger.info("Stopping usque service...")
+            subprocess.run(["systemctl", "stop", "usque"], check=False)
+            self.process = None # Clear legacy process handle if any
+            return True
+        except Exception as e:
+            logger.error(f"Error stopping usque: {e}")
+            return False
     
-    def is_connected(self) -> bool:
-        """Check if usque is running AND connected (can reach Cloudflare)"""
-        # 1. Check if process/port is listening first (quick check)
-        is_running = False
-        if self.process and self.process.poll() is None:
-            is_running = True
-        else:
-            # Check if port is listening
-            try:
-                for conn in psutil.net_connections():
-                    if conn.laddr.port == self.socks5_port and conn.status == 'LISTEN':
-                        is_running = True
-                        break
-            except:
-                pass
-        
-        if not is_running:
+    def _is_port_open(self, port: int) -> bool:
+        """Check if port is listening using ss"""
+        try:
+            # ss -lnt sport = :<port>
+            # Use basic string matching for robustness
+            result = subprocess.run(
+                ["ss", "-lnt", f"sport = :{port}"],
+                capture_output=True,
+                text=True
+            )
+            return f":{port}" in result.stdout
+        except Exception:
             return False
 
-        # 2. Check actual connectivity
+    def is_connected(self) -> bool:
+        """Check if usque is running via systemd"""
+        # 1. Check service status
+        try:
+            res = subprocess.run(
+                ["systemctl", "is-active", "usque"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            is_active = (res.returncode == 0)
+        except Exception:
+            is_active = False
+        
+        if not is_active:
+            return False
+
+        # 2. Check if port is listening (faster than curl)
+        if not self._is_port_open(self.socks5_port):
+            return False
+
+        # 3. Check actual connectivity
         try:
             result = subprocess.run(
                 [
