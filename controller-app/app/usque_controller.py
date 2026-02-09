@@ -114,6 +114,9 @@ class UsqueController:
         """Start usque SOCKS5 proxy via supervisor"""
         try:
             logger.info("Starting usque service (proxy mode)...")
+            # Ensure clean state (clear FATAL/BACKOFF from previous runs)
+            subprocess.run(["supervisorctl", "stop", "usque"], check=False)
+            time.sleep(0.5)
             subprocess.run(["supervisorctl", "start", "usque"], check=True)
 
             logger.info("Waiting for usque proxy to become ready...")
@@ -131,36 +134,62 @@ class UsqueController:
             return False
 
     def _connect_tun(self) -> bool:
-        """Start usque TUN mode via supervisor"""
+        """Start usque nativetun + set up routing + start gost proxy listeners."""
         try:
-            logger.info("Starting usque service (TUN mode)...")
+            logger.info("Starting usque service (TUN mode: nativetun)...")
+            # Ensure clean state
+            subprocess.run(["supervisorctl", "stop", "usque"], check=False)
+            subprocess.run(["supervisorctl", "stop", "usque-tun"], check=False)
+            subprocess.run(["supervisorctl", "stop", "tun-proxy"], check=False)
+            time.sleep(0.5)
+
+            # Save original default route before TUN modifies anything
+            orig_gw, orig_iface, orig_ip = self._get_default_route()
+
+            # Start usque nativetun (creates tun0 interface)
             subprocess.run(["supervisorctl", "start", "usque-tun"], check=True)
 
-            logger.info("Waiting for usque TUN to become ready...")
+            logger.info("Waiting for TUN interface to come up...")
             for _ in range(20):
-                if self._is_tun_connected():
-                    logger.info("usque TUN started successfully")
-                    self._start_tun_proxy()
+                if self._tun_interface_exists():
+                    break
+                time.sleep(1)
+            else:
+                logger.error("TUN interface failed to appear (timeout)")
+                return False
+
+            # Set up routing with policy-based split
+            self._setup_tun_routing(orig_gw, orig_iface, orig_ip)
+
+            # Start gost as plain SOCKS5 + HTTP listener;
+            # since default route is now through tun0, traffic goes through WARP
+            logger.info("Starting tun-proxy (gost SOCKS5 + HTTP)...")
+            subprocess.run(["supervisorctl", "start", "tun-proxy"], check=True)
+
+            for _ in range(10):
+                if self._is_port_open(self.socks5_port):
+                    logger.info("usque TUN mode started successfully")
                     return True
                 time.sleep(1)
 
-            logger.error("usque TUN failed to start (timeout)")
+            logger.error("tun-proxy failed to start (timeout)")
             return False
         except Exception as e:
             logger.error(f"Failed to start usque TUN: {e}")
             return False
 
     def disconnect(self) -> bool:
-        """Stop usque (both modes)"""
+        """Stop all usque services (both modes, prevents stale FATAL states)"""
         try:
-            logger.info(f"Stopping usque service ({self._mode} mode)...")
+            logger.info("Stopping usque services...")
+            # Always stop ALL services to avoid leftover FATAL/BACKOFF states
+            subprocess.run(["supervisorctl", "stop", "tun-proxy"], check=False)
+            subprocess.run(["supervisorctl", "stop", "http-proxy"], check=False)
+            subprocess.run(["supervisorctl", "stop", "usque-tun"], check=False)
+            subprocess.run(["supervisorctl", "stop", "usque"], check=False)
 
-            if self._mode == "tun":
-                subprocess.run(["supervisorctl", "stop", "tun-proxy"], check=False)
-                subprocess.run(["supervisorctl", "stop", "usque-tun"], check=False)
-            else:
-                subprocess.run(["supervisorctl", "stop", "http-proxy"], check=False)
-                subprocess.run(["supervisorctl", "stop", "usque"], check=False)
+            # Clean up TUN routing if tun0 was active
+            self._cleanup_tun_routing()
 
             self.process = None
             self._invalidate_status_cache()
@@ -187,23 +216,167 @@ class UsqueController:
         except Exception as e:
             logger.warning(f"Failed to start HTTP proxy: {e}")
 
-    def _start_tun_proxy(self):
-        """Start SOCKS5 + HTTP proxy for TUN mode"""
+    # ------------------------------------------------------------------
+    # TUN routing helpers
+    # ------------------------------------------------------------------
+
+    def _get_default_route(self):
+        """Get original default gateway, interface, and container IP."""
+        gw, iface, ip = None, None, None
         try:
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True, timeout=5,
+            )
+            line = result.stdout.strip().split('\n')[0]
+            parts = line.split()
+            if 'via' in parts and 'dev' in parts:
+                gw = parts[parts.index('via') + 1]
+                iface = parts[parts.index('dev') + 1]
+        except Exception as e:
+            logger.warning(f"Could not get default route: {e}")
+            return None, None, None
+
+        # Get primary IP on that interface
+        if iface:
+            try:
+                result = subprocess.run(
+                    ["ip", "-4", "-o", "addr", "show", "dev", iface],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in result.stdout.strip().split('\n'):
+                    if 'inet ' in line:
+                        # Format: "N: eth0  inet 172.18.0.2/16 ..."
+                        ip = line.split('inet ')[1].split('/')[0]
+                        break
+            except Exception:
+                pass
+
+        if gw and iface:
+            logger.info(f"Original default route: via {gw} dev {iface}, IP {ip}")
+        return gw, iface, ip
+
+    def _tun_interface_exists(self) -> bool:
+        """Check if a tun interface (tun0, tun1, ...) exists."""
+        try:
+            result = subprocess.run(
+                ["ip", "link", "show", "type", "tun"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return "tun" in result.stdout
+        except Exception:
+            return False
+
+    def _get_tun_interface_name(self) -> Optional[str]:
+        """Get the name of the first tun interface."""
+        try:
+            result = subprocess.run(
+                ["ip", "-o", "link", "show", "type", "tun"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    # Format: "N: tunX: ..."
+                    parts = line.split(':')
+                    if len(parts) >= 2:
+                        return parts[1].strip()
+        except Exception:
+            pass
+        return None
+
+    def _get_warp_endpoint(self) -> Optional[str]:
+        """Read endpoint_v4 from usque config.json."""
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, "r") as f:
+                    config = json.load(f)
+                return config.get("endpoint_v4")
+        except Exception as e:
+            logger.warning(f"Could not read endpoint from config: {e}")
+        return None
+
+    def _setup_tun_routing(self, orig_gw: Optional[str], orig_iface: Optional[str], orig_ip: Optional[str]):
+        """Set up policy-based routing for usque nativetun.
+
+        Strategy:
+        1. Create routing table 100 with original default gateway
+        2. Add ip rule: traffic from container's own IP uses table 100
+           (ensures panel/proxy response traffic bypasses the TUN)
+        3. Route the WARP endpoint through original gateway (prevent loop)
+        4. Set default route through tun interface (all other traffic → WARP)
+        """
+        tun_name = self._get_tun_interface_name() or "tun0"
+        endpoint = self._get_warp_endpoint()
+
+        # 1. Policy routing: response traffic from our IP uses original gateway
+        if orig_gw and orig_iface and orig_ip:
+            logger.info(f"Setting up policy route: from {orig_ip} → table 100 via {orig_gw} dev {orig_iface}")
+            subprocess.run(
+                f"ip route add default via {orig_gw} dev {orig_iface} table 100",
+                shell=True, check=False,
+            )
+            # Copy connected-subnet routes so ARP works in table 100
             res = subprocess.run(
-                ["supervisorctl", "status", "tun-proxy"],
+                f"ip route show dev {orig_iface} scope link",
+                capture_output=True, text=True, shell=True,
+            )
+            for line in res.stdout.strip().split('\n'):
+                subnet = line.split()[0] if line.strip() else None
+                if subnet:
+                    subprocess.run(
+                        f"ip route add {subnet} dev {orig_iface} table 100",
+                        shell=True, check=False,
+                    )
+            # Remove stale rule, then add
+            subprocess.run(f"ip rule del from {orig_ip} lookup 100 2>/dev/null", shell=True, check=False)
+            subprocess.run(f"ip rule add from {orig_ip} lookup 100", shell=True, check=False)
+        else:
+            logger.warning("Missing orig_gw/iface/ip, skipping policy route (panel may be inaccessible in TUN mode)")
+
+        # 2. Route WARP endpoint through original gateway (prevent routing loop)
+        if orig_gw and orig_iface and endpoint:
+            logger.info(f"Routing WARP endpoint {endpoint} via {orig_gw} dev {orig_iface}")
+            subprocess.run(
+                f"ip route add {endpoint}/32 via {orig_gw} dev {orig_iface}",
+                shell=True, check=False,
+            )
+
+        # 3. Set default route through TUN
+        subprocess.run(
+            f"ip route replace default dev {tun_name}",
+            shell=True, check=False,
+        )
+        logger.info(f"TUN routing configured: default via {tun_name}, policy from {orig_ip} via table 100")
+
+    def _cleanup_tun_routing(self):
+        """Remove TUN routing: policy rule, table 100, endpoint route."""
+        try:
+            # Remove ip rule for container IP
+            result = subprocess.run(
+                "ip rule show", shell=True,
                 capture_output=True, text=True,
             )
-            if "RUNNING" in res.stdout:
-                return
-            logger.info("Starting TUN proxy (SOCKS5 + HTTP)...")
-            subprocess.run(["supervisorctl", "start", "tun-proxy"], check=False)
-            for _ in range(10):
-                if self._is_port_open(self.socks5_port):
-                    break
-                time.sleep(0.5)
-        except Exception as e:
-            logger.warning(f"Failed to start TUN proxy: {e}")
+            for line in result.stdout.strip().split('\n'):
+                if 'lookup 100' in line:
+                    # Extract "from X.X.X.X"
+                    parts = line.split()
+                    if 'from' in parts:
+                        ip = parts[parts.index('from') + 1]
+                        subprocess.run(f"ip rule del from {ip} lookup 100", shell=True, check=False)
+
+            # Flush table 100
+            subprocess.run("ip route flush table 100 2>/dev/null", shell=True, check=False)
+
+            # Remove endpoint route
+            endpoint = self._get_warp_endpoint()
+            if endpoint:
+                subprocess.run(
+                    f"ip route del {endpoint}/32 2>/dev/null",
+                    shell=True, check=False,
+                )
+            # Default route will be restored automatically when tun goes down
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Connectivity checks
@@ -234,7 +407,7 @@ class UsqueController:
         return self._is_port_open(self.socks5_port)
 
     def _is_tun_connected(self) -> bool:
-        """Check if usque TUN mode is running"""
+        """Check if usque nativetun is running and tun interface exists."""
         try:
             res = subprocess.run(
                 ["supervisorctl", "status", "usque-tun"],
@@ -244,8 +417,7 @@ class UsqueController:
                 return False
         except Exception:
             return False
-        # Trust supervisor status; optionally verify TUN interface
-        return True
+        return self._tun_interface_exists()
 
     def is_connected(self) -> bool:
         """Check if usque is running in current mode"""
@@ -315,7 +487,7 @@ class UsqueController:
         return base_status
 
     def _fetch_ip_info(self) -> Optional[Dict]:
-        """Fetch IP info. Proxy mode: via SOCKS5. TUN mode: direct (all traffic tunnelled)."""
+        """Fetch IP info. Proxy mode: via SOCKS5. TUN mode: direct (traffic goes through tun)."""
         try:
             if self._mode == "tun":
                 cmd = [

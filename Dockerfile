@@ -30,7 +30,7 @@ FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y \
     curl gpg lsb-release ca-certificates dbus \
     python3 python3-pip socat \
-    iputils-ping iproute2 procps supervisor \
+    iputils-ping iproute2 iptables procps supervisor \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Cloudflare Warp (official client - kept for fallback)

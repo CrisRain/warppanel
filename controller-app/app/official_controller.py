@@ -32,6 +32,10 @@ class OfficialController:
         self._cached_ip_info = None
         self._cache_time: float = 0
         self._cache_ttl: float = 120
+        # TUN routing state
+        self._saved_gateway = None
+        self._saved_interface = None
+        self._saved_ip = None
 
     # ------------------------------------------------------------------
     # Mode management
@@ -50,18 +54,28 @@ class OfficialController:
             logger.info(f"Already in {mode} mode")
             return True
 
-        logger.info(f"Switching official mode from {self._mode} to {mode}")
+        previous_mode = self._mode
+        logger.info(f"Switching official mode from {previous_mode} to {mode}")
 
         # WireGuard only valid in TUN mode
         if mode == "proxy" and self.preferred_protocol == "wireguard":
             logger.info("Resetting protocol to MASQUE (WireGuard only in TUN mode)")
             self.preferred_protocol = "masque"
 
+        # Disconnect and clean up resources from previous mode
         self.disconnect()
+        
+        # Extra cleanup when switching FROM TUN mode
+        if previous_mode == "tun":
+            logger.info("Cleaning up TUN mode resources...")
+            self._cleanup_tun_routing()
+            time.sleep(1)
+        
         time.sleep(2)
         self._mode = mode
         os.environ["WARP_MODE"] = mode
         self._invalidate_status_cache()
+        logger.info(f"Mode switched to {mode}, ready to connect")
         return True
 
     # ------------------------------------------------------------------
@@ -171,6 +185,9 @@ class OfficialController:
                 logger.error("Failed to start official WARP services (TUN)")
                 return False
 
+        # Save original route BEFORE warp-cli connect modifies routing
+        self._save_original_route()
+
         logger.info("Connecting WARP (official, TUN mode)...")
         self.execute_command("warp-cli --accept-tos mode warp")
 
@@ -186,6 +203,12 @@ class OfficialController:
             self.mute_backend_logs = True
             self._invalidate_status_cache()
             logger.info("Official WARP TUN connection successful")
+            
+            # Give WARP a moment to fully initialize nftables rules
+            time.sleep(2)
+            
+            # Apply policy routing so panel/proxy response traffic bypasses WARP TUN
+            self._apply_tun_routing()
             self._start_tun_proxy()
             return True
 
@@ -196,6 +219,12 @@ class OfficialController:
         """Disconnect from WARP and stop services"""
         logger.info(f"Disconnecting WARP (official, {self._mode} mode)...")
         self._cached_ip_info = None
+        self._invalidate_status_cache()
+
+        # Clean up TUN routing before disconnecting
+        if self._mode == "tun":
+            logger.info("Cleaning up TUN routing and firewall rules...")
+            self._cleanup_tun_routing()
 
         try:
             self.execute_command("warp-cli --accept-tos disconnect")
@@ -204,6 +233,7 @@ class OfficialController:
             pass
 
         self._stop_services()
+        logger.info("WARP disconnected successfully")
         return True
 
     # ------------------------------------------------------------------
@@ -371,6 +401,168 @@ class OfficialController:
                 time.sleep(0.5)
         except Exception as e:
             logger.warning(f"Failed to start TUN proxy: {e}")
+
+    # ------------------------------------------------------------------
+    # TUN routing helpers
+    # ------------------------------------------------------------------
+
+    def _save_original_route(self):
+        """Save original default gateway, interface and container IP."""
+        try:
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True, text=True, timeout=5,
+            )
+            line = result.stdout.strip().split('\n')[0]
+            parts = line.split()
+            if 'via' in parts and 'dev' in parts:
+                self._saved_gateway = parts[parts.index('via') + 1]
+                self._saved_interface = parts[parts.index('dev') + 1]
+        except Exception as e:
+            logger.warning(f"Could not get default route: {e}")
+            return
+
+        # Get primary IP on the interface
+        if self._saved_interface:
+            try:
+                result = subprocess.run(
+                    ["ip", "-4", "-o", "addr", "show", "dev", self._saved_interface],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in result.stdout.strip().split('\n'):
+                    if 'inet ' in line:
+                        self._saved_ip = line.split('inet ')[1].split('/')[0]
+                        break
+            except Exception:
+                pass
+
+        logger.info(
+            f"Saved original route: via {self._saved_gateway} dev {self._saved_interface}, IP {self._saved_ip}"
+        )
+
+    def _apply_tun_routing(self):
+        """Apply policy-based routing so panel/proxy response traffic bypasses WARP TUN.
+
+        Strategy:
+        1. Create routing table 100 with original default gateway
+        2. Add ip rule: traffic from container's own IP uses table 100
+           (ensures panel/proxy response traffic goes back via Docker bridge)
+        """
+        gw = self._saved_gateway
+        iface = self._saved_interface
+        ip = self._saved_ip
+
+        if not gw or not iface or not ip:
+            logger.warning("Missing original route info, skipping TUN routing fix (panel may be inaccessible)")
+            return
+
+        try:
+            logger.info(f"Applying TUN policy route: from {ip} → table 100 via {gw} dev {iface}")
+
+            # 1. Create routing table 100 with original default gateway
+            subprocess.run(
+                f"ip route add default via {gw} dev {iface} table 100",
+                shell=True, check=False,
+            )
+            # Copy connected-subnet routes so ARP works in table 100
+            res = subprocess.run(
+                f"ip route show dev {iface} scope link",
+                capture_output=True, text=True, shell=True,
+            )
+            for line in res.stdout.strip().split('\n'):
+                subnet = line.split()[0] if line.strip() else None
+                if subnet:
+                    subprocess.run(
+                        f"ip route add {subnet} dev {iface} table 100",
+                        shell=True, check=False,
+                    )
+
+            # Add ip rule so traffic from our IP uses table 100 (bypassing WARP)
+            subprocess.run(
+                f"ip rule add from {ip} lookup 100",
+                shell=True, check=False,
+            )
+
+            # 3. Add nftables rules to allow traffic on eth0
+            # WARP's nftables firewall (cloudflare-warp table) has default DROP policy
+            # We need to explicitly allow eth0 traffic for panel/proxy access
+            # Wait for WARP to create its nftables table (may take a moment after connect)
+            logger.info(f"Waiting for WARP nftables table to be ready...")
+            nft_table_ready = False
+            for _ in range(10):  # Wait up to 5 seconds
+                result = subprocess.run(
+                    "nft list table inet cloudflare-warp 2>/dev/null",
+                    shell=True, capture_output=True, text=True,
+                )
+                if result.returncode == 0 and "cloudflare-warp" in result.stdout:
+                    nft_table_ready = True
+                    break
+                time.sleep(0.5)
+            
+            if not nft_table_ready:
+                logger.warning("WARP nftables table not found, firewall rules may not be applied")
+            else:
+                logger.info(f"Adding nftables rules for {iface} interface...")
+                # Add rules with retry to ensure they're inserted
+                for attempt in range(3):
+                    subprocess.run(
+                        f"nft insert rule inet cloudflare-warp input iif \"{iface}\" tcp dport 8000 accept 2>/dev/null",
+                        shell=True, check=False,
+                    )
+                    subprocess.run(
+                        f"nft insert rule inet cloudflare-warp input iif \"{iface}\" tcp dport 1080 accept 2>/dev/null",
+                        shell=True, check=False,
+                    )
+                    subprocess.run(
+                        f"nft insert rule inet cloudflare-warp input iif \"{iface}\" tcp dport 8080 accept 2>/dev/null",
+                        shell=True, check=False,
+                    )
+                    subprocess.run(
+                        f"nft insert rule inet cloudflare-warp output oif \"{iface}\" accept 2>/dev/null",
+                        shell=True, check=False,
+                    )
+                    
+                    # Verify rules were added
+                    verify = subprocess.run(
+                        f"nft list chain inet cloudflare-warp input 2>/dev/null | grep -q 'iif \"{iface}\"'",
+                        shell=True,
+                    )
+                    if verify.returncode == 0:
+                        logger.info(f"nftables rules successfully added for {iface}")
+                        break
+                    else:
+                        logger.warning(f"nftables rules not found, retrying... (attempt {attempt + 1}/3)")
+                        time.sleep(1)
+
+            logger.info(f"TUN policy route applied: from {ip} via {gw} dev {iface}")
+        except Exception as e:
+            logger.error(f"Failed to apply TUN routing: {e}")
+
+    def _cleanup_tun_routing(self):
+        """Remove policy routing rules, table 100, iptables connmark, and nftables rules."""
+        iface = self._saved_interface or "eth0"
+        ip = self._saved_ip
+        
+        try:
+            # Remove ip rule for container IP (fallback rules)
+            result = subprocess.run(
+                "ip rule show", shell=True,
+                capture_output=True, text=True,
+            )
+            for line in result.stdout.strip().split('\n'):
+                if 'lookup 100' in line:
+                    parts = line.split()
+                    if 'from' in parts:
+                        rule_ip = parts[parts.index('from') + 1]
+                        subprocess.run(f"ip rule del from {rule_ip} lookup 100", shell=True, check=False)
+
+            # Flush table 100
+            subprocess.run("ip route flush table 100 2>/dev/null", shell=True, check=False)
+            
+            # Note: nftables rules will be re-added on next connect anyway
+            logger.info("TUN routing cleanup complete")
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Connectivity checks

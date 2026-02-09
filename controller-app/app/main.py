@@ -190,15 +190,28 @@ async def switch_backend(request: dict):
     if new_backend not in ["usque", "official"]:
         raise HTTPException(status_code=400, detail="Invalid backend. Use 'usque' or 'official'")
     
+    previous_backend = WarpController.get_current_backend()
+    previous_mode = WarpController.get_current_mode()
+    
+    logger.info(f"API: Switching backend from {previous_backend} to {new_backend}")
+    
     try:
         # Switch backend using factory
         controller = await run_blocking(WarpController.switch_backend, new_backend)
         
-        # Try to connect with new backend (optional, but good UX)
-        if await run_blocking(controller.connect):
-            return {"success": True, "backend": new_backend, "status": "connected"}
-        else:
-            return {"success": True, "backend": new_backend, "status": "disconnected", "warning": "Backend switched but failed to connect immediately"}
+        # Try to connect with new backend
+        logger.info(f"API: Connecting with new backend {new_backend}...")
+        connect_success = await run_blocking(controller.connect)
+        status = await run_blocking(controller.get_status)
+        
+        return {
+            "success": True, 
+            "previous_backend": previous_backend,
+            "backend": new_backend, 
+            "connected": connect_success,
+            "mode": getattr(controller, 'mode', 'proxy'),
+            "status": status,
+        }
             
     except Exception as e:
         logger.error(f"Switch backend failed: {e}")
@@ -266,20 +279,25 @@ async def set_mode(request: dict):
         raise HTTPException(status_code=400, detail="Invalid mode. Use 'proxy' or 'tun'")
 
     controller = WarpController.get_instance()
+    previous_mode = getattr(controller, 'mode', 'proxy')
 
     if not hasattr(controller, 'set_mode'):
         raise HTTPException(status_code=501, detail="Backend does not support mode switching")
 
+    logger.info(f"API: Switching mode from {previous_mode} to {mode}")
+    
     success = await run_blocking(controller.set_mode, mode)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to switch mode")
 
     # Reconnect in new mode
+    logger.info(f"API: Connecting in {mode} mode...")
     connect_success = await run_blocking(controller.connect)
     status = await run_blocking(controller.get_status)
 
     return {
         "success": True,
+        "previous_mode": previous_mode,
         "mode": mode,
         "connected": connect_success,
         "status": status,
@@ -288,12 +306,33 @@ async def set_mode(request: dict):
 
 @app.get("/api/config/mode")
 async def get_mode():
-    """Get current operating mode"""
+    """Get current operating mode and configuration"""
+    controller = WarpController.get_instance()
     return {
         "mode": WarpController.get_current_mode(),
         "backend": WarpController.get_current_backend(),
+        "protocol": getattr(controller, 'preferred_protocol', 'masque'),
+        "connected": await run_blocking(controller.is_connected) if hasattr(controller, 'is_connected') else False,
     }
 
+
+@app.get("/api/config/protocol")
+async def get_protocol():
+    """Get current tunnel protocol"""
+    controller = WarpController.get_instance()
+    backend = WarpController.get_current_backend()
+    mode = WarpController.get_current_mode()
+    protocol = getattr(controller, 'preferred_protocol', 'masque')
+    
+    # WireGuard availability
+    wireguard_available = backend == "official" and mode == "tun"
+    
+    return {
+        "protocol": protocol,
+        "backend": backend,
+        "mode": mode,
+        "wireguard_available": wireguard_available,
+    }
 
 @app.post("/api/config/protocol")
 async def set_protocol(request: dict):
@@ -304,25 +343,37 @@ async def set_protocol(request: dict):
         raise HTTPException(status_code=400, detail="Invalid protocol. Use 'masque' or 'wireguard'")
 
     controller = WarpController.get_instance()
+    backend = WarpController.get_current_backend()
+    current_mode = getattr(controller, 'mode', 'proxy')
+    previous_protocol = getattr(controller, 'preferred_protocol', 'masque')
 
     # WireGuard validation
     if protocol == "wireguard":
-        backend = WarpController.get_current_backend()
         if backend != "official":
             raise HTTPException(status_code=400, detail="WireGuard is only available with the official backend")
-        if not hasattr(controller, 'mode') or controller.mode != "tun":
-            raise HTTPException(status_code=400, detail="WireGuard is only available in TUN mode")
+        if current_mode != "tun":
+            raise HTTPException(status_code=400, detail="WireGuard is only available in TUN mode. Please switch to TUN mode first.")
+
+    logger.info(f"API: Switching protocol from {previous_protocol} to {protocol}")
 
     if hasattr(controller, 'set_protocol'):
         success = await run_blocking(controller.set_protocol, protocol)
         if success:
-            return {"success": True, "protocol": protocol}
+            status = await run_blocking(controller.get_status)
+            return {
+                "success": True, 
+                "previous_protocol": previous_protocol,
+                "protocol": protocol,
+                "backend": backend,
+                "mode": current_mode,
+                "status": status,
+            }
         else:
             raise HTTPException(status_code=500, detail="Failed to set protocol")
     else:
         if protocol == "wireguard":
             raise HTTPException(status_code=501, detail="This backend does not support WireGuard")
-        return {"success": True, "protocol": "masque"}
+        return {"success": True, "protocol": "masque", "backend": backend}
 
 
 @app.get("/api/logs")

@@ -44,18 +44,32 @@ class WarpController:
     def switch_backend(cls, new_backend: str) -> Union[UsqueController, OfficialController]:
         """
         Switch to a different backend.
-        Note: This changes the environment variable but doesn't restart the container.
-        For full switching, the container needs to be restarted with the new backend.
+        Properly disconnects and cleans up the old backend before switching.
         """
         if new_backend not in ["usque", "official"]:
             raise ValueError(f"Invalid backend: {new_backend}. Use 'usque' or 'official'")
         
-        logger.info(f"Switching backend from {cls._current_backend} to {new_backend}")
+        current_backend = cls._current_backend or os.getenv("WARP_BACKEND", "usque")
+        if current_backend == new_backend and cls._instance:
+            logger.info(f"Already using {new_backend} backend")
+            return cls._instance
         
-        # Disconnect current backend
+        logger.info(f"Switching backend from {current_backend} to {new_backend}")
+        
+        # Disconnect and cleanup current backend
         if cls._instance:
             try:
+                # Get current mode before disconnecting
+                current_mode = getattr(cls._instance, 'mode', 'proxy')
+                logger.info(f"Disconnecting current backend ({current_backend}, {current_mode} mode)...")
+                
                 cls._instance.disconnect()
+                
+                # Extra cleanup for TUN mode
+                if current_mode == "tun" and hasattr(cls._instance, '_cleanup_tun_routing'):
+                    logger.info("Cleaning up TUN routing from previous backend...")
+                    cls._instance._cleanup_tun_routing()
+                    
             except Exception as e:
                 logger.warning(f"Error disconnecting current backend: {e}")
         
@@ -89,6 +103,8 @@ class WarpController:
         os.environ["WARP_BACKEND"] = new_backend
         cls._instance = None
         cls._current_backend = None
+        
+        logger.info(f"Backend switched to {new_backend}, creating new controller...")
         
         # Return new instance
         return cls.get_instance()

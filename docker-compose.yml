@@ -7,16 +7,23 @@ services:
     container_name: warppanel-client
     restart: unless-stopped
     # privileged: true  # No longer needed for supervisor
-    cap_add:
-      - NET_ADMIN  # Required for TUN mode
     environment:
       - WARP_BACKEND=official # Options: 'usque' (default), 'official'
-      - WARP_MODE=proxy       # Options: 'proxy' (default), 'tun'
+      - WARP_MODE=proxy # Options: 'proxy' (default), 'tun'
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE # Optional: if you need to load kernel modules in container
+    # Required for TUN mode - uncomment when using WARP_MODE=tun
     devices:
       - /dev/net/tun
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+      # Disable reverse path filtering for TUN mode (allows asymmetric routing)
+      - net.ipv4.conf.all.rp_filter=0
+      - net.ipv4.conf.default.rp_filter=0
     stop_signal: SIGTERM
     ports:
-      - "5173:8000"            # Web UI (served by FastAPI)
+      - "5173:8000" # Web UI (served by FastAPI)
       - "127.0.0.1:1080:1080" # SOCKS5 Proxy (localhost only)
       - "127.0.0.1:8080:8080" # HTTP Proxy  (localhost only)
     volumes:
