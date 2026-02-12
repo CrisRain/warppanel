@@ -544,71 +544,79 @@ class LinuxTunManager:
             # 先清理旧规则（幂等）
             await cls.cleanup_nftables_rules()
 
+            # 检查 forward 链是否存在
+            forward_chain_exists = False
+            rc, _, _ = await cls._run_command(["nft", "list", "chain", "inet", "cloudflare-warp", "forward"])
+            if rc == 0:
+                forward_chain_exists = True
+
             # ---- 1. 允许已建立连接 (Established/Related) ----
             await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                "nft", "insert", "rule", "inet", "cloudflare-warp", "input",
                 "ct", "state", "established,related", "accept",
                 "comment", f"{cls.COMMENT_PREFIX}allow-established"
             ])
-            await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
-                "ct", "state", "established,related", "accept",
-                "comment", f"{cls.COMMENT_PREFIX}allow-forward-established"
-            ])
+            if forward_chain_exists:
+                await cls._run_command([
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "forward",
+                    "ct", "state", "established,related", "accept",
+                    "comment", f"{cls.COMMENT_PREFIX}allow-forward-established"
+                ])
 
             # ---- 2. 允许回环接口 ----
             await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                "nft", "insert", "rule", "inet", "cloudflare-warp", "input",
                 "iifname", "lo", "accept",
                 "comment", f"{cls.COMMENT_PREFIX}allow-loopback"
             ])
 
             # ---- 3. 允许 Docker 流量 ----
             await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                "nft", "insert", "rule", "inet", "cloudflare-warp", "input",
                 "iifname", "docker*", "accept",
                 "comment", f"{cls.COMMENT_PREFIX}allow-docker"
             ])
             await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                "nft", "insert", "rule", "inet", "cloudflare-warp", "input",
                 "iifname", "br-*", "accept",
                 "comment", f"{cls.COMMENT_PREFIX}allow-bridge"
             ])
             await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                "nft", "insert", "rule", "inet", "cloudflare-warp", "input",
                 "iifname", "veth*", "accept",
                 "comment", f"{cls.COMMENT_PREFIX}allow-veth"
             ])
-            await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
-                "iifname", "docker*", "accept",
-                "comment", f"{cls.COMMENT_PREFIX}forward-docker-in"
-            ])
-            await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
-                "oifname", "docker*", "accept",
-                "comment", f"{cls.COMMENT_PREFIX}forward-docker-out"
-            ])
-            await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
-                "iifname", "br-*", "accept",
-                "comment", f"{cls.COMMENT_PREFIX}forward-bridge-in"
-            ])
-            await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
-                "oifname", "br-*", "accept",
-                "comment", f"{cls.COMMENT_PREFIX}forward-bridge-out"
-            ])
-            await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
-                "iifname", "veth*", "accept",
-                "comment", f"{cls.COMMENT_PREFIX}forward-veth-in"
-            ])
-            await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
-                "oifname", "veth*", "accept",
-                "comment", f"{cls.COMMENT_PREFIX}forward-veth-out"
-            ])
+            if forward_chain_exists:
+                await cls._run_command([
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "forward",
+                    "iifname", "docker*", "accept",
+                    "comment", f"{cls.COMMENT_PREFIX}forward-docker-in"
+                ])
+                await cls._run_command([
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "forward",
+                    "oifname", "docker*", "accept",
+                    "comment", f"{cls.COMMENT_PREFIX}forward-docker-out"
+                ])
+                await cls._run_command([
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "forward",
+                    "iifname", "br-*", "accept",
+                    "comment", f"{cls.COMMENT_PREFIX}forward-bridge-in"
+                ])
+                await cls._run_command([
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "forward",
+                    "oifname", "br-*", "accept",
+                    "comment", f"{cls.COMMENT_PREFIX}forward-bridge-out"
+                ])
+                await cls._run_command([
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "forward",
+                    "iifname", "veth*", "accept",
+                    "comment", f"{cls.COMMENT_PREFIX}forward-veth-in"
+                ])
+                await cls._run_command([
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "forward",
+                    "oifname", "veth*", "accept",
+                    "comment", f"{cls.COMMENT_PREFIX}forward-veth-out"
+                ])
 
             # ---- 4. 恢复快照中记录的接口放行 ----
             for iface_name in extra_ifaces:
@@ -618,7 +626,7 @@ class LinuxTunManager:
                 if iface_name.startswith("docker"):
                     continue
                 await cls._run_command([
-                    "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "input",
                     "iifname", iface_name, "accept",
                     "comment", f"{cls.COMMENT_PREFIX}preserved-iface-{iface_name}"
                 ])
@@ -627,14 +635,14 @@ class LinuxTunManager:
                 if pattern.startswith("docker"):
                     continue
                 await cls._run_command([
-                    "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "input",
                     "iifname", pattern, "accept",
                     "comment", f"{cls.COMMENT_PREFIX}preserved-pattern-{pattern}"
                 ])
 
             # ---- 5. 允许物理网卡出站 ----
             await cls._run_command([
-                "nft", "add", "rule", "inet", "cloudflare-warp", "output",
+                "nft", "insert", "rule", "inet", "cloudflare-warp", "output",
                 "oif", interface, "accept",
                 "comment", f"{cls.COMMENT_PREFIX}controller-output"
             ])
@@ -642,7 +650,7 @@ class LinuxTunManager:
             # ---- 6. 按端口放行入站 TCP ----
             for port in tcp_ports:
                 await cls._run_command([
-                    "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "input",
                     "tcp", "dport", str(port), "accept",
                     "comment", f"{cls.COMMENT_PREFIX}allow-tcp-{port}"
                 ])
@@ -650,7 +658,7 @@ class LinuxTunManager:
             # ---- 7. 按端口放行入站 UDP ----
             for port in udp_ports:
                 await cls._run_command([
-                    "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                    "nft", "insert", "rule", "inet", "cloudflare-warp", "input",
                     "udp", "dport", str(port), "accept",
                     "comment", f"{cls.COMMENT_PREFIX}allow-udp-{port}"
                 ])
