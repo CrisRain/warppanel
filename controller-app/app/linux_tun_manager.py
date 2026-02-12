@@ -550,6 +550,11 @@ class LinuxTunManager:
                 "ct", "state", "established,related", "accept",
                 "comment", f"{cls.COMMENT_PREFIX}allow-established"
             ])
+            await cls._run_command([
+                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
+                "ct", "state", "established,related", "accept",
+                "comment", f"{cls.COMMENT_PREFIX}allow-forward-established"
+            ])
 
             # ---- 2. 允许回环接口 ----
             await cls._run_command([
@@ -563,6 +568,46 @@ class LinuxTunManager:
                 "nft", "add", "rule", "inet", "cloudflare-warp", "input",
                 "iifname", "docker*", "accept",
                 "comment", f"{cls.COMMENT_PREFIX}allow-docker"
+            ])
+            await cls._run_command([
+                "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                "iifname", "br-*", "accept",
+                "comment", f"{cls.COMMENT_PREFIX}allow-bridge"
+            ])
+            await cls._run_command([
+                "nft", "add", "rule", "inet", "cloudflare-warp", "input",
+                "iifname", "veth*", "accept",
+                "comment", f"{cls.COMMENT_PREFIX}allow-veth"
+            ])
+            await cls._run_command([
+                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
+                "iifname", "docker*", "accept",
+                "comment", f"{cls.COMMENT_PREFIX}forward-docker-in"
+            ])
+            await cls._run_command([
+                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
+                "oifname", "docker*", "accept",
+                "comment", f"{cls.COMMENT_PREFIX}forward-docker-out"
+            ])
+            await cls._run_command([
+                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
+                "iifname", "br-*", "accept",
+                "comment", f"{cls.COMMENT_PREFIX}forward-bridge-in"
+            ])
+            await cls._run_command([
+                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
+                "oifname", "br-*", "accept",
+                "comment", f"{cls.COMMENT_PREFIX}forward-bridge-out"
+            ])
+            await cls._run_command([
+                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
+                "iifname", "veth*", "accept",
+                "comment", f"{cls.COMMENT_PREFIX}forward-veth-in"
+            ])
+            await cls._run_command([
+                "nft", "add", "rule", "inet", "cloudflare-warp", "forward",
+                "oifname", "veth*", "accept",
+                "comment", f"{cls.COMMENT_PREFIX}forward-veth-out"
             ])
 
             # ---- 4. 恢复快照中记录的接口放行 ----

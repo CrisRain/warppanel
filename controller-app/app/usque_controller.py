@@ -244,7 +244,6 @@ class UsqueController:
 
 
             logger.info("usque TUN mode started successfully (Proxy listeners disabled)")
-            return True
 
         except Exception as e:
             logger.error(f"Failed to start usque TUN: {e}")
