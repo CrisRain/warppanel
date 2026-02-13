@@ -8,19 +8,8 @@ services:
     restart: unless-stopped
     # privileged: true  # No longer needed for supervisor
     environment:
-      - WARP_BACKEND=official # Options: 'usque' (default), 'official'
-      - WARP_MODE=proxy # Options: 'proxy' (default), 'tun'
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE # Optional: if you need to load kernel modules in container
-    # Required for TUN mode - uncomment when using WARP_MODE=tun
-    devices:
-      - /dev/net/tun
-    sysctls:
-      - net.ipv4.conf.all.src_valid_mark=1
-      # Disable reverse path filtering for TUN mode (allows asymmetric routing)
-      - net.ipv4.conf.all.rp_filter=0
-      - net.ipv4.conf.default.rp_filter=0
+      - WARP_BACKEND=usque # Options: 'usque' (default), 'official'
+      # - PANEL_PASSWORD=secret # Optional: Set a password for the panel
     stop_signal: SIGTERM
     ports:
       - "5173:8000" # Web UI (served by FastAPI)
@@ -28,8 +17,10 @@ services:
     volumes:
       - warp_data:/var/lib/cloudflare-warp
       - warp_usque:/var/lib/warp
+      - warp_config:/app/data
       # - /sys/fs/cgroup:/sys/fs/cgroup:rw  # Not needed for supervisor
 
 volumes:
   warp_data:
   warp_usque:
+  warp_config:

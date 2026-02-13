@@ -5,12 +5,6 @@ set -e
 export PANEL_PORT="${PANEL_PORT:-8000}"
 export SOCKS5_PORT="${SOCKS5_PORT:-1080}"
 
-# Ensure TUN device exists (required for TUN mode)
-mkdir -p /dev/net
-if [ ! -e /dev/net/tun ]; then
-  mknod /dev/net/tun c 10 200
-  chmod 600 /dev/net/tun
-fi
 
 # Start DBus (required for warp-svc)
 mkdir -p /run/dbus

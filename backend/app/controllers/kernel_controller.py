@@ -9,6 +9,7 @@ import zipfile
 import stat
 import re
 from typing import List, Optional, Dict
+from .config_controller import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +20,11 @@ class KernelVersionManager:
         # Base directory for data
         self.base_dir = os.getenv("WARP_DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"))
         self.kernels_dir = os.path.join(self.base_dir, "kernels")
-        self.config_path = os.path.join(self.base_dir, "config.json")
         
         # Ensure directories exist
         os.makedirs(self.kernels_dir, exist_ok=True)
+        
+        self.config_mgr = ConfigManager.get_instance()
         
     @classmethod
     def get_instance(cls):
@@ -30,27 +32,9 @@ class KernelVersionManager:
             cls._instance = KernelVersionManager()
         return cls._instance
 
-    def _load_config(self) -> Dict:
-        try:
-            if os.path.exists(self.config_path):
-                with open(self.config_path, "r") as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load config: {e}")
-        return {}
-
-    def _save_config(self, config: Dict):
-        try:
-            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-            with open(self.config_path, "w") as f:
-                json.dump(config, f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save config: {e}")
-
     def list_versions(self, backend: str) -> List[str]:
         """List available versions for a backend"""
         if backend == "official":
-            # Official backend is system managed
             return ["System Default"]
             
         backend_dir = os.path.join(self.kernels_dir, backend)
@@ -78,14 +62,14 @@ class KernelVersionManager:
             except:
                 pass
             return "System Default"
-            
-        config = self._load_config()
-        return config.get(f"{backend}_version")
+        
+        # Use ConfigManager
+        return self.config_mgr.get(f"{backend}_version")
 
     def set_active_version(self, backend: str, version: str) -> bool:
         """Set the active version for a backend"""
         if backend == "official":
-            return False # Cannot set version for official backend
+            return False 
             
         # Verify version exists
         version_path = os.path.join(self.kernels_dir, backend, version)
@@ -93,10 +77,8 @@ class KernelVersionManager:
             logger.error(f"Version {version} not found for {backend}")
             return False
             
-        # Update config
-        config = self._load_config()
-        config[f"{backend}_version"] = version
-        self._save_config(config)
+        # Update config via manager
+        self.config_mgr.set(f"{backend}_version", version)
         
         # Update symlink if on Linux and backend is usque
         if os.name == 'posix' and backend == 'usque':
@@ -128,8 +110,6 @@ class KernelVersionManager:
             # Fallback to system path if no version selected
             return backend 
             
-        # Construct path: data/kernels/{backend}/{version}/{backend}
-        # Windows: .exe, Linux: no extension
         binary_name = backend
         if os.name == 'nt':
             binary_name += ".exe"
@@ -145,7 +125,6 @@ class KernelVersionManager:
     def get_installed_version_info(self, backend: str = "usque") -> Dict:
         """
         Get version info for the currently active backend.
-        Runs `{binary} version` to get the real version.
         """
         binary_path = self.get_binary_path(backend)
         version_info = {
@@ -157,32 +136,30 @@ class KernelVersionManager:
         
         # 1. Get local installed version
         try:
-            # usque version output example: "usque version 1.4.2"
             cmd = [binary_path, "version"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
+            # On windows, sometimes full path is needed or current dir behavior differs
+            cwd = os.path.dirname(binary_path) if os.path.isabs(binary_path) else None
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=2, cwd=cwd)
             if result.returncode == 0:
                 output = result.stdout.strip()
-                # Try to parse version from string
                 match = re.search(r'version\s+v?(\d+\.\d+\.\d+)', output, re.IGNORECASE)
                 if match:
                     version_info["version"] = match.group(1)
                 else:
-                    # Fallback: try to just find semantic version pattern
                     match = re.search(r'v?(\d+\.\d+\.\d+)', output)
                     if match:
                         version_info["version"] = match.group(1)
                     else:
-                         version_info["version"] = output # Return raw output if no match
+                         version_info["version"] = output
         except Exception as e:
             logger.debug(f"Failed to get local version for {backend}: {e}")
-            # If binary call fails, fallback to configured version string
             active = self.get_active_version(backend)
             if active:
                  version_info["version"] = active.replace("v", "")
 
-        # 2. Check cached latest version (to avoid rate limiting)
-        config = self._load_config()
-        latest_cache = config.get(f"{backend}_latest_version")
+        # 2. Check cached latest version
+        latest_cache = self.config_mgr.get(f"{backend}_latest_version")
         if latest_cache:
             version_info["latest_version"] = latest_cache
             if version_info["version"] != "Unknown" and latest_cache != version_info["version"]:
@@ -193,8 +170,6 @@ class KernelVersionManager:
     def check_for_updates(self, backend: str = "usque") -> Optional[str]:
         """
         Check GitHub for latest release.
-        Returns latest version string if found, else None.
-        Updates config cache.
         """
         if backend != "usque":
             return None
@@ -208,10 +183,8 @@ class KernelVersionManager:
                 data = resp.json()
                 tag_name = data.get("tag_name", "").lstrip("v")
                 if tag_name:
-                    # Update cache
-                    config = self._load_config()
-                    config[f"{backend}_latest_version"] = tag_name
-                    self._save_config(config)
+                    # Update cache via manager
+                    self.config_mgr.set(f"{backend}_latest_version", tag_name)
                     logger.info(f"Latest {backend} version: {tag_name}")
                     return tag_name
         except Exception as e:
@@ -228,12 +201,10 @@ class KernelVersionManager:
             
         logger.info(f"Starting auto-update check for {backend}...")
         
-        # 1. Get latest version
         latest_version = self.check_for_updates(backend)
         if not latest_version:
             return False
             
-        # 2. Get current version
         current_info = self.get_installed_version_info(backend)
         current_version = current_info.get("version")
         
@@ -243,9 +214,7 @@ class KernelVersionManager:
             
         logger.info(f"New version available: {latest_version} (current: {current_version}). Downloading...")
         
-        # 3. Download and install
         if self.download_and_install(backend, latest_version):
-            # 4. Switch to new version
             logger.info(f"Switching to new version {latest_version}...")
             return self.set_active_version(backend, latest_version)
             
@@ -258,12 +227,9 @@ class KernelVersionManager:
         if backend != "usque":
             return False
             
-        # Determine architecture
         arch = platform.machine().lower()
         system = platform.system().lower()
         
-        # Map to release asset names
-        # Example: usque_1.4.2_linux_amd64.zip
         if system == "linux":
             os_name = "linux"
         elif system == "darwin":
@@ -282,9 +248,6 @@ class KernelVersionManager:
             logger.error(f"Unsupported architecture: {arch}")
             return False
             
-        # Construct asset name pattern
-        # Since we don't know exact filename, we list assets from API or guess
-        # Let's use the API to find the asset url
         repo = "Diniboy1123/usque"
         api_url = f"https://api.github.com/repos/{repo}/releases/tags/v{version}"
         
@@ -309,13 +272,9 @@ class KernelVersionManager:
             logger.error(f"No compatible asset found for {os_name}/{arch_name}")
             return False
             
-        # Download
-        target_dir = os.path.join(self.kernels_dir, backend, version) # No 'v' prefix in dir name usually? active_version uses what set_active passed.
-        # standardize version dir name to just version string "1.4.2"
+        target_dir = os.path.join(self.kernels_dir, backend, version)
         
         if os.path.exists(target_dir):
-            # Already installed?
-            # Check if binary exists
             binary_name = backend + (".exe" if os_name == "windows" else "")
             if os.path.exists(os.path.join(target_dir, binary_name)):
                 logger.info(f"Version {version} already installed")
@@ -332,15 +291,12 @@ class KernelVersionManager:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
                         
-            # Extract
             logger.info("Extracting...")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(target_dir)
                 
-            # Cleanup zip
             os.remove(zip_path)
             
-            # Make executable (Linux/Mac)
             if os_name != "windows":
                 binary_path = os.path.join(target_dir, backend)
                 if os.path.exists(binary_path):
@@ -360,20 +316,16 @@ class KernelVersionManager:
     def adopt_system_installation(self, backend: str = "usque") -> bool:
         """
         If no versions are managed, check if system has the binary installed
-        and adopt it as the initial managed version.
         """
         if backend != "usque":
             return False
             
-        # Check if we already have managed versions
         versions = self.list_versions(backend)
         if versions:
             return False
             
-        # Check system path
         system_path = shutil.which(backend)
         if not system_path:
-            # Fallback for linux_install.sh location
             if os.path.exists("/usr/local/bin/usque"):
                 system_path = "/usr/local/bin/usque"
             else:
@@ -381,7 +333,6 @@ class KernelVersionManager:
         
         logger.info(f"Found system installation of {backend} at {system_path}")
         
-        # Get version
         try:
             cmd = [system_path, "version"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
@@ -392,16 +343,13 @@ class KernelVersionManager:
                     version = match.group(1)
                     logger.info(f"Detected system version: {version}")
                     
-                    # Create managed directory
                     target_dir = os.path.join(self.kernels_dir, backend, version)
                     os.makedirs(target_dir, exist_ok=True)
                     
                     target_binary = os.path.join(target_dir, backend)
                     
-                    # Copy binary
                     shutil.copy2(system_path, target_binary)
                     
-                    # Set active
                     self.set_active_version(backend, version)
                     logger.info(f"Adopted system installation as managed version {version}")
                     return True

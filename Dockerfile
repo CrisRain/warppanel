@@ -72,21 +72,21 @@ ENV PYTHONUNBUFFERED=1 \
     PANEL_PORT=8000
 
 # Install Python deps (separate layer for caching)
-COPY controller-app/requirements.txt .
+COPY backend/requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # ---- Create runtime directories ----
 RUN mkdir -p /app/data/kernels /var/lib/warp /var/log/supervisor
 
 # ---- Supervisor config (rarely changes) ----
-COPY controller-app/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY backend/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # ---- Entrypoint (rarely changes) ----
-COPY controller-app/entrypoint.sh /app/entrypoint.sh
+COPY backend/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # ---- Application code (changes most often → last) ----
-COPY controller-app/app /app/app
+COPY backend/app /app/app
 COPY --from=frontend-build /build/dist /app/static
 
 # ---- Ports ----

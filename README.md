@@ -7,9 +7,9 @@
 [![Vue 3](https://img.shields.io/badge/Frontend-Vue_3-4FC08D?style=flat-square&logo=vue.js)](https://vuejs.org/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
 
-**现代化的 Cloudflare WARP 单实例管理面板**
+**Modern Cloudflare WARP Management Panel**
 
-[功能特性](#-功能特性) • [技术栈](#-技术栈) • [快速开始](#-快速开始) • [使用指南](#-使用说明) • [Linux 原生部署](#-linux-原生部署无-docker)
+[Features](#-features) • [Tech Stack](#-tech-stack) • [Quick Start](#-quick-start) • [Usage](#-usage) • [Linux Native](#-linux-native-deployment)
 
 ---
 
@@ -17,60 +17,59 @@
 
 </div>
 
-**WarpPanel** 是一款专为管理 Cloudflare WARP 客户端设计的现代化 Web 控制面板。它拥有极具质感的 **Glassmorphism (磨砂玻璃)** 风格界面，提供流畅的交互体验，支持在 **Official** 与 **usque** 双核引擎间无缝切换，助您轻松掌控网络连接。
+**WarpPanel** is a modern Web control panel designed for managing Cloudflare WARP clients. With a stunning **Glassmorphism** interface, it offers seamless switching between **Official** and **usque** engines, helping you easily control your network connection.
 
-## ✨ 功能特性
+## ✨ Features
 
-- **🎯 单实例精细管理**
-  精准控制 WARP 容器，状态实时同步，极低资源占用，适合个人 VPS 或本地环境部署。
+- **🎯 Precise Single-Instance Management**
+  Control the WARP container with precision. Real-time status synchronization and low resource usage, perfect for VPS or local deployment.
 
-- **🔄 无缝双核架构 (Dual Backend)**
-  WarpPanel 独创支持双内核一键热切换，无需重启容器：
-  - **`usque` (MASQUE)**: 高性能、轻量级的 Go 实现，连接速度极快，资源占用极低（**默认推荐**）。
-  - **`official`**: Cloudflare 官方 Linux 客户端，拥有最强的兼容性和原生特性支持。
+- **🔄 Dual Backend Architecture**
+  - **`usque` (MASQUE)**: High-performance, lightweight Go implementation. Extremely fast and resource-efficient (**Recommended**).
+  - **`official`**: Cloudflare's official Linux client for maximum compatibility.
+  - **Seamless Switching**: Switch backends instantly without restarting the container.
 
-- **🌐 双模式运行 (Proxy / TUN)**
-  - **Proxy 模式**: 以 SOCKS5 代理方式工作，外部程序通过代理端口走 WARP 隧道。
-  - **TUN 模式**: 创建 TUN 虚拟网卡，容器内全部流量经 WARP 隧道。
+- **🌐 SOCKS5 Proxy Mode**
+  Works as a SOCKS5 proxy. External applications can route traffic through WARP via the proxy port (`:1080`).
 
-- **🔧 多协议支持 (MASQUE / WireGuard)**
-  - **MASQUE**: 基于 HTTP/3 的现代隧道协议，所有后端和模式均支持。
-  - **WireGuard**: 经典高性能 VPN 协议，仅在 **official 后端 + TUN 模式** 下可用，一键切换。
+- **🔧 MASQUE Protocol Support**
+  Modern HTTP/3 tunnel protocol for better resistance to interference and faster speeds.
 
-- **⚡ 极致性能与响应**
-  - **零阻塞架构**: 后端采用全异步非阻塞设计，耗时操作均在有限线程池中执行，不会耗尽系统资源。
-  - **实时监控**: 基于 WebSocket 推送，秒级响应连接状态变化。
-  - **智能缓存**: 状态与 IP 信息多级缓存，避免重复查询导致不必要的流量与 CPU 消耗。
+- **⚡ Performance & Responsiveness**
+  - **Non-blocking Architecture**: Backend operations are asynchronous, ensuring the UI remains responsive.
+  - **Real-time Monitoring**: WebSocket-based status updates.
+  - **Smart Caching**: Efficient caching of IP and status information to minimize overhead.
 
-- **🎨 沉浸式 UI 设计**
-  基于 Vue 3 + Tailwind CSS v4 构建，全响应式布局，配合丝滑的过渡动画，提供顶级的视觉体验。
+- **🎨 Immersive UI**
+  Built with Vue 3 + Tailwind CSS v4. Fully responsive with smooth transitions.
 
-- **🛡️ 安全与智能**
-  - **安全代理**: SOCKS5 代理端口默认仅绑定 `127.0.0.1`，防止被外部扫描器滥用流量。
-  - **纯净日志**: 智能屏蔽冗余的底层连接日志，仅展示关键业务信息。
-  - **智能 Endpoint 管理**: 支持自定义 Endpoint (IP:PORT)，允许用户指定最优连接节点。
-  - **IP 轮换**: 修改 Endpoint 或重连即可获取新 IP。
+- **🛡️ Security & Intelligence**
+  - **Secure Proxy**: SOCKS5 port binds to `127.0.0.1` by default to prevent unauthorized external access.
+  - **Clean Logs**: Intelligent filtering of verbose connection logs.
+  - **Custom Endpoints**: Support for specifying custom IP:PORT endpoints.
+  - **Kernel Management**: Auto-update and version management for the `usque` kernel.
+  - **Password Protection**: Optional web panel authentication.
 
-## 🛠️ 技术栈
+## 🛠️ Tech Stack
 
-| 模块 | 技术选型 | 说明 |
+| Module | Tech | Description |
 | :--- | :--- | :--- |
-| **Frontend** | Vue 3, Vite, Tailwind CSS v4 | 现代化组件开发，极致构建速度，原子化 CSS |
-| **Backend** | Python 3.10+, FastAPI, AsyncIO | 高性能异步 Web 框架，稳定可靠 |
-| **Core** | Cloudflare WARP Official + usque | 官方稳定版与社区高性能版双剑合璧 |
-| **Deploy** | Docker / Linux 原生 | 容器化一键部署或 Linux 原生安装均可 |
+| **Frontend** | Vue 3, Vite, Tailwind CSS v4 | Atomic CSS, rapid development |
+| **Backend** | Python 3.10+, FastAPI, AsyncIO | High-performance async Web framework |
+| **Core** | Cloudflare WARP Official + usque | Official stability + Community performance |
+| **Deploy** | Docker / Linux Native | Containerized or direct installation |
 
-## 🚀 快速开始
+## 🚀 Quick Start
 
-### 前置要求
-- **Docker** (Desktop 或 Engine)
-- **Git** (仅源码构建需要)
+### Prerequisites
+- **Docker** (Desktop or Engine)
+- **Git** (for source build)
 
-### 方式一：Docker Hub 快速启动 (推荐)
+### Option 1: Docker Hub (Recommended)
 
-无需构建代码，直接使用预构建镜像即可运行。
+No build required. Run directly with the pre-built image.
 
-1. **创建 `docker-compose.yml` 文件**
+1. **Create `docker-compose.yml`**
 
 ```yaml
 services:
@@ -78,180 +77,111 @@ services:
     image: crisocean/warppanel:latest
     container_name: warppanel-client
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
     environment:
-      - WARP_BACKEND=official # 'usque' (默认) or 'official'
-      - WARP_MODE=proxy       # 'proxy' (默认) or 'tun'
-    devices:
-      - /dev/net/tun
+      - WARP_BACKEND=usque # 'usque' (default) or 'official'
+      # - PANEL_PASSWORD=secret # Optional: Protect the UI
     ports:
       - "5173:8000"            # Web UI
-      - "127.0.0.1:1080:1080"  # SOCKS5 Proxy (仅本地访问)
+      - "127.0.0.1:1080:1080"  # SOCKS5 Proxy (Local access only)
     volumes:
       - warp_data:/var/lib/cloudflare-warp
       - warp_usque:/var/lib/warp
+      - warp_config:/app/data
 
 volumes:
   warp_data:
   warp_usque:
+  warp_config:
 ```
 
-2. **启动服务**
+2. **Start Service**
 
 ```bash
 docker-compose up -d
 ```
 
-### 方式二：从源码构建
-
-如果您想进行二次开发或自定义构建：
+### Option 2: Build from Source
 
 ```bash
-# 1. 克隆项目
+# 1. Clone
 git clone https://github.com/CrisRain/warppanel.git
 cd warppanel
 
-# 2. 构建并启动
+# 2. Build & Run
 docker-compose up --build -d
 ```
 
-启动完成后，请访问浏览器：**[http://localhost:5173](http://localhost:5173)**
+Access the panel at: **[http://localhost:5173](http://localhost:5173)**
 
 ---
 
-## 📖 使用说明
+## 📖 Usage
 
-1.  **建立连接**
-    点击界面中央巨大的 **Connect** 按钮即可启动 WARP 连接。连接过程纯后台异步执行，界面不会卡顿。
+1.  **Connect**
+    Click the **Connect** button to start.
 
-2.  **切换内核 (Backend Switching)**
-    在右上角菜单中选择 **Usque** 或 **Official**。系统将自动处理旧进程清理、端口释放与新服务启动，全程无需人工干预。
+2.  **Switch Backend**
+    Use the dropdown menu to select **Usque** or **Official**.
 
-3.  **切换模式 (Proxy / TUN)**
-    在右上角模式选择器中切换 **Proxy** 或 **TUN** 模式：
-    - **Proxy**: 轻量代理模式，通过 SOCKS5 (`:1080`) 代理接入 WARP。
-    - **TUN**: 全隧道模式，创建 TUN 虚拟网卡，容器全流量走 WARP（需 `NET_ADMIN` 权限）。
+3.  **Kernel Management**
+    Navigate to the **Kernel** page to manage `usque` versions, check for updates, or switch active versions.
 
-4.  **切换协议 (MASQUE / WireGuard)**
-    使用 **official 后端 + TUN 模式** 时，点击 Protocol 卡片可在 MASQUE 和 WireGuard 之间切换。
+4.  **Settings**
+    Configure Panel Password, Ports, and Custom Endpoints in the **Settings** page.
 
-5.  **查看状态**
-    连接成功后，卡片将实时显示您的：
-    - 🌍 **IP 地址** & **地理位置**
-    - 🏢 **ISP 供应商**
-    - 📡 **协议类型** (MASQUE / WireGuard)
+5.  **Logs**
+    View real-time service logs in the **Logs** page.
 
-6.  **自定义 Endpoint**
-    在底部的输入框中填写您优选的 WARP Endpoint (格式 `IP:PORT`)，点击 **APPLY** 即可生效。留空并点击 **APPLY** 可重置为默认。
+## 🔒 Security
 
-7.  **查看日志**
-    点击 **"Service Logs"** 卡片进入日志页。系统会自动过滤掉底层的 "Connection open/closed" 等噪音，只为您展示关键的连接与错误信息。
+> **Important**: The SOCKS5 proxy binds to `127.0.0.1` by default.
 
-## 🔒 远程部署安全提示
-
-> **重要**：SOCKS5 代理端口默认绑定 `127.0.0.1`，仅允许本机访问，防止开放代理被恶意扫描器滥用消耗流量。
-
-如需从其他机器远程使用代理，请通过 **SSH 隧道** 安全转发：
-
+To access remotely, use an SSH tunnel:
 ```bash
 ssh -L 1080:127.0.0.1:1080 your-server-ip
-# 然后在本地使用 socks5://127.0.0.1:1080 即可
 ```
 
-如确实需要对外暴露（不推荐），可将 `docker-compose.yml` 中的端口改为 `"1080:1080"`。
+To expose publicly (not recommended), update `docker-compose.yml` ports to `"1080:1080"`.
 
 ---
 
-## 🐧 Linux 原生部署（无 Docker）
+## 🐧 Linux Native Deployment
 
-如果您不想使用 Docker，可以在 Linux 系统上直接安装 WarpPanel。
-
-### 前置要求
-
-- Ubuntu 20.04 / 22.04 或 Debian 11 / 12
-- Root 权限
-
-### 安装步骤
+Run directly on Ubuntu/Debian without Docker.
 
 ```bash
-# 1. 克隆项目
 git clone https://github.com/CrisRain/warppanel.git
 cd warppanel
-
-# 2. 赋予安装脚本执行权限
 chmod +x linux_install.sh
-
-# 3. 以 root 执行安装
 sudo ./linux_install.sh
 ```
 
-安装脚本将自动完成以下操作：
-- 安装系统依赖（Python、Node.js、Supervisor 等）
-- 安装 Cloudflare WARP 官方客户端
-- 下载 `usque` 二进制文件（自动获取最新版本）
-- 创建 Python 虚拟环境并安装依赖
-- 构建 Vue.js 前端并部署至后端静态目录
-- 配置 `supervisor` 管理全部服务
-
-### 服务管理
-
+### Management commands
 ```bash
-# 查看服务状态
 sudo supervisorctl status
-
-# 重启所有服务
 sudo supervisorctl restart all
-
-# 查看 API 日志
-tail -f /var/log/warppool/api.log
 ```
 
-### 访问地址
-
-| 服务 | 地址 |
-| :--- | :--- |
-| Web UI | http://localhost:8000 |
-| SOCKS5 代理 | `socks5://localhost:1080`（连接后可用） |
-
-### 卸载
-
-```bash
-# 1. 停止服务
-sudo supervisorctl stop all
-
-# 2. 移除 supervisor 配置
-sudo rm /etc/supervisor/conf.d/warppool.conf
-sudo supervisorctl reread
-sudo supervisorctl update
-
-# 3. 恢复系统 WARP 服务（可选）
-sudo systemctl enable --now warp-svc
-```
-
----
-
-## 💻 开发指南
+## 💻 Development
 
 <details>
-<summary>点击展开开发环境配置</summary>
+<summary>Development Setup</summary>
 
-### 前端开发 (Frontend)
+### Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-### 后端开发 (Backend)
+### Backend
 ```bash
-cd controller-app
+cd backend
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
 </details>
 
-## 📄 许可证
-
-本项目基于 [MIT License](LICENSE) 开源。欢迎 Star 与 Fork！
+## 📄 License
+[MIT License](LICENSE)

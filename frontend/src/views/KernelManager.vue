@@ -23,7 +23,10 @@
           >
             <div>
               <span class="block text-sm font-bold" :class="backend === 'usque' ? 'text-indigo-900' : 'text-gray-700'">USQUE</span>
-              <span class="text-xs text-gray-500 mt-0.5 block">Lightweight, specialized client</span>
+              <span class="text-xs text-gray-500 mt-0.5 flex items-center gap-2">
+                Lightweight, specialized client
+                <span v-if="versionMap.usque?.installed_version" class="font-mono bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded text-[10px]">v{{ versionMap.usque.installed_version }}</span>
+              </span>
             </div>
             <div class="w-5 h-5 rounded-full border flex items-center justify-center" :class="backend === 'usque' ? 'border-indigo-500 bg-indigo-500' : 'border-gray-300'">
               <CheckIcon v-if="backend === 'usque'" class="w-3 h-3 text-white" />
@@ -38,7 +41,10 @@
           >
             <div>
               <span class="block text-sm font-bold" :class="backend === 'official' ? 'text-orange-900' : 'text-gray-700'">Official Client</span>
-              <span class="text-xs text-gray-500 mt-0.5 block">Standard Cloudflare WARP client</span>
+              <span class="text-xs text-gray-500 mt-0.5 flex items-center gap-2">
+                Standard Cloudflare WARP client
+                <span v-if="versionMap.official?.installed_version" class="font-mono bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded text-[10px]">v{{ versionMap.official.installed_version }}</span>
+              </span>
             </div>
             <div class="w-5 h-5 rounded-full border flex items-center justify-center" :class="backend === 'official' ? 'border-orange-500 bg-orange-500' : 'border-gray-300'">
               <CheckIcon v-if="backend === 'official'" class="w-3 h-3 text-white" />
@@ -47,49 +53,7 @@
         </div>
       </div>
 
-      <!-- Mode Selection -->
-      <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-        <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-          <CpuChipIcon class="w-5 h-5 text-emerald-500" />
-          Operating Mode
-        </h3>
-        
-        <div class="space-y-3">
-          <button 
-            @click="switchMode('proxy')"
-            class="w-full text-left p-4 rounded-xl border transition-all duration-200 flex items-center justify-between group"
-            :class="warpMode === 'proxy' ? 'bg-gray-50 border-gray-300 ring-1 ring-gray-300' : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'"
-            :disabled="isLoading"
-          >
-            <div>
-              <span class="block text-sm font-bold" :class="warpMode === 'proxy' ? 'text-gray-900' : 'text-gray-700'">Proxy Mode</span>
-              <span class="text-xs text-gray-500 mt-0.5 block">SOCKS5 + HTTP Proxy only</span>
-            </div>
-            <div class="w-5 h-5 rounded-full border flex items-center justify-center" :class="warpMode === 'proxy' ? 'border-gray-600 bg-gray-600' : 'border-gray-300'">
-              <CheckIcon v-if="warpMode === 'proxy'" class="w-3 h-3 text-white" />
-            </div>
-          </button>
 
-          <button 
-            @click="switchMode('tun')"
-            class="w-full text-left p-4 rounded-xl border transition-all duration-200 flex items-center justify-between group"
-            :class="[
-              warpMode === 'tun' ? 'bg-emerald-50 border-emerald-200 ring-1 ring-emerald-200' : 'bg-white border-gray-200',
-              isDocker ? 'opacity-50 cursor-not-allowed hover:border-gray-200' : 'hover:border-emerald-300 hover:shadow-sm'
-            ]"
-            :disabled="isLoading || isDocker"
-          >
-            <div>
-              <span class="block text-sm font-bold" :class="warpMode === 'tun' ? 'text-emerald-900' : 'text-gray-700'">TUN Mode</span>
-              <span class="text-xs text-gray-500 mt-0.5 block">Full system tunnel (VPN)</span>
-              <span v-if="isDocker" class="text-[10px] text-red-500 mt-1 block font-medium">Not available in Docker</span>
-            </div>
-            <div class="w-5 h-5 rounded-full border flex items-center justify-center" :class="warpMode === 'tun' ? 'border-emerald-500 bg-emerald-500' : 'border-gray-300'">
-              <CheckIcon v-if="warpMode === 'tun'" class="w-3 h-3 text-white" />
-            </div>
-          </button>
-        </div>
-      </div>
 
       <!-- Protocol Selection -->
       <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
@@ -106,9 +70,6 @@
           
           <p class="text-xs text-gray-500 mb-4">
             MASQUE is the modern standard. WireGuard is legacy but may be faster.
-            <span v-if="!canSwitchProtocol" class="block mt-2 text-orange-600 font-medium text-[10px] bg-orange-50 p-2 rounded border border-orange-100">
-              Note: Protocol switching is only available when using <strong>Official Backend</strong> in <strong>TUN Mode</strong>.
-            </span>
           </p>
 
           <button 
@@ -236,17 +197,30 @@ const apiCall = async (method, url, data = null) => {
   }
 };
 
-const fetchVersions = async () => {
-  const data = await apiCall('get', `/api/kernel/versions?backend=${backend.value}`);
+const versionMap = ref({});
+
+const fetchAllVersions = async () => {
+  const data = await apiCall('get', '/api/kernel/all-versions');
   if (data) {
-    versionData.value = {
-      versions: data.versions || [],
-      current: data.current || 'Unknown',
-      installed_version: data.installed_version || '',
-      latest_version: data.latest_version || '',
-      update_available: data.update_available || false
-    };
+    versionMap.value = data;
+    // Also update current selected version data if needed
+    if (data[backend.value]) {
+       const b = data[backend.value];
+       versionData.value = {
+        versions: b.versions || [],
+        current: b.current || 'Unknown',
+        installed_version: b.installed_version || '',
+        latest_version: b.latest_version || '',
+        update_available: b.update_available || false
+       };
+    }
   }
+};
+
+const fetchVersions = async () => {
+    // Legacy method, kept for compatibility if needed, but fetchAllVersions covers it mostly.
+    // Actually we can just call fetchAllVersions
+    await fetchAllVersions();
 };
 
 const checkForUpdates = async () => {

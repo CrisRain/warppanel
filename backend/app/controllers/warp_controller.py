@@ -65,15 +65,10 @@ class WarpController:
         if cls._instance:
             try:
                 # Get current mode before disconnecting
-                current_mode = getattr(cls._instance, 'mode', 'proxy')
-                logger.info(f"Disconnecting current backend ({current_backend}, {current_mode} mode)...")
+                current_mode = "proxy"
+                logger.info(f"Disconnecting current backend ({current_backend})...")
                 
                 await cls._instance.disconnect()
-                
-                # Extra cleanup for TUN mode
-                if current_mode == "tun" and hasattr(cls._instance, '_cleanup_tun_routing'):
-                    logger.info("Cleaning up TUN routing from previous backend...")
-                    await cls._instance._cleanup_tun_routing()
                     
             except Exception as e:
                 logger.warning(f"Error disconnecting current backend: {e}")
@@ -125,10 +120,8 @@ class WarpController:
 
     @classmethod
     def get_current_mode(cls) -> str:
-        """Get the current operating mode (proxy/tun)"""
-        if cls._instance and hasattr(cls._instance, 'mode'):
-            return cls._instance.mode
-        return os.getenv("WARP_MODE", "proxy")
+        """Get the current operating mode (always proxy)"""
+        return "proxy"
 
     @classmethod
     async def reset(cls):

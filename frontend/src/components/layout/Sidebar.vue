@@ -50,7 +50,7 @@
       <div class="flex items-center gap-3">
         <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
         <p class="text-xs font-medium text-gray-500">System Online</p>
-        <span class="ml-auto text-[10px] text-gray-400 font-mono bg-white px-2 py-0.5 rounded-full border border-gray-100 shadow-sm">v1.3.0</span>
+        <span class="ml-auto text-[10px] text-gray-400 font-mono bg-white px-2 py-0.5 rounded-full border border-gray-100 shadow-sm">{{ version }}</span>
       </div>
     </div>
   </aside>
@@ -64,6 +64,7 @@ import {
   CpuChipIcon,
   XMarkIcon
 } from '@heroicons/vue/24/outline';
+import { ref, onMounted } from 'vue';
 
 defineProps({
   isOpen: Boolean
@@ -77,4 +78,22 @@ const navItems = [
   { name: 'Logs', path: '/logs', icon: CommandLineIcon },
   { name: 'Settings', path: '/settings', icon: Cog6ToothIcon },
 ];
+
+const version = ref('...');
+
+onMounted(async () => {
+  try {
+    // Determine API base - if in dev mode (Vite typically proxies /api, but if not we might need full URL)
+    // Assuming Vite proxy is set up or relative path works (which it should if served by same backend or proxy)
+    const res = await fetch('/api/version');
+    if (res.ok) {
+        const data = await res.json();
+        // Ensure v prefix
+        version.value = data.version.startsWith('v') ? data.version : `v${data.version}`;
+    }
+  } catch (e) {
+    console.error("Failed to fetch version:", e);
+    version.value = 'Unknown';
+  }
+});
 </script>
