@@ -283,58 +283,45 @@ class LinuxTunManager:
     # Docker Compatibility (Port Mapping Fixes)
     # ------------------------------------------------------------------
 
-    async def setup_docker_compatibility(self, iface: str) -> None:
-        """Set up iptables marking to ensure Docker port mappings work correctly.
+    async def setup_docker_bypass(self) -> None:
+        """Configure policy routing so Docker containers bypass the TUN interface.
 
-        Marks incoming connections on the physical interface so their replies
-        are routed back through the same interface (bypassing TUN).
+        Routes private subnets (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) to the
+        'main' table, ensuring they use the physical gateway instead of the TUN default route.
         """
-        if not iface:
-            return
-
         try:
-            logger.info(f"Setting up Docker compatibility rules for {iface}...")
+            logger.info("Setting up Docker/Private bypass rules (Host-Only Mode)...")
             
-            # fwmark 0x64 (100) to match table 100
-            mark = "0x64" 
+            # Subnets to exclude from TUN
+            subnets = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
             
-            # 1. Add fwmark rule
-            await self._exec(f"ip rule add fwmark {mark} table {_POLICY_TABLE} priority {_POLICY_PRIORITY - 1}")
+            for subnet in subnets:
+                # Priority 50: Process before default route
+                cmd = f"ip rule add from {subnet} table main priority 50"
+                rc, _, stderr = await self._exec(cmd)
+                if rc != 0 and "File exists" not in stderr:
+                    logger.error(f"Failed to add bypass rule for {subnet}: {stderr}")
 
-            # 2. Add iptables mangle rules
-            # Restore mark on PREROUTING (for established connections)
-            await self._exec(f"iptables -t mangle -A PREROUTING -j CONNMARK --restore-mark")
-            
-            # Mark NEW connections coming from physical interface
-            await self._exec(f"iptables -t mangle -A PREROUTING -i {iface} -m conntrack --ctstate NEW -j CONNMARK --set-mark {mark}")
-            
-            # Restore mark on OUTPUT (for local replies)
-            await self._exec(f"iptables -t mangle -A OUTPUT -j CONNMARK --restore-mark")
-            
-            logger.info("Docker compatibility rules applied")
+            logger.info("Docker bypass rules applied")
         except Exception as e:
-            logger.error(f"Error setting up Docker compatibility: {e}")
+            logger.error(f"Error setting up Docker bypass: {e}")
 
-    async def cleanup_docker_compatibility(self, iface: str) -> None:
-        """Remove iptables marking rules for Docker compatibility."""
-        if not iface:
-            return
-
+    async def cleanup_docker_bypass(self) -> None:
+        """Remove policy routing rules for Docker bypass."""
         try:
-            mark = "0x64"
+            subnets = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
             
-            # 1. Remove fwmark rule
-            await self._exec(f"ip rule del fwmark {mark} table {_POLICY_TABLE}")
-
-            # 2. Remove iptables mangle rules (using -D)
-            # Order matters less for deletion, but let's be thorough
-            await self._exec(f"iptables -t mangle -D PREROUTING -j CONNMARK --restore-mark")
-            await self._exec(f"iptables -t mangle -D PREROUTING -i {iface} -m conntrack --ctstate NEW -j CONNMARK --set-mark {mark}")
-            await self._exec(f"iptables -t mangle -D OUTPUT -j CONNMARK --restore-mark")
+            for subnet in subnets:
+                # Clean up rules (loop to handle potential duplicates)
+                for _ in range(3):
+                    cmd = f"ip rule del from {subnet} table main priority 50"
+                    rc, _, _ = await self._exec(cmd)
+                    if rc != 0:
+                        break # No more rules
             
-            logger.info("Docker compatibility rules removed")
+            logger.info("Docker bypass rules removed")
         except Exception as e:
-            logger.error(f"Error cleaning up Docker compatibility: {e}")
+            logger.error(f"Error cleaning up Docker bypass: {e}")
 
     # ------------------------------------------------------------------
     # Split Tunneling via warp-cli  (OfficialController)

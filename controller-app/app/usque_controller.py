@@ -302,20 +302,18 @@ class UsqueController:
         # 3. Set default route through TUN (Safe metric-based)
         await self._tun_manager.set_default_interface(tun_name)
         
-        # 4. Docker Compatibility (Fix port mappings)
-        if self._saved_iface:
-            await self._tun_manager.setup_docker_compatibility(self._saved_iface)
+        # 4. Host-Only Mode: Route Docker/Private subnets to main table (Bypass TUN)
+        await self._tun_manager.setup_docker_bypass()
 
-        logger.info(f"TUN routing configured: default via {tun_name} (metric 1)")
+        logger.info(f"TUN routing configured: default via {tun_name} (metric 1) [Host-Only Mode]")
 
     async def _cleanup_tun_routing(self):
         """Remove TUN routing: policy rule, table 100, endpoint route."""
         # Cleanup bypass routing
         await self._tun_manager.cleanup_bypass_routing(self._saved_ip)
         
-        # Cleanup Docker compatibility
-        if self._saved_iface:
-            await self._tun_manager.cleanup_docker_compatibility(self._saved_iface)
+        # Cleanup Docker/Private bypass
+        await self._tun_manager.cleanup_docker_bypass()
             
         # Remove default route (if interface still exists, though stopping tun usually removes it)
         # We try to remove it explicitly to be safe
